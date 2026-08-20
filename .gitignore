@@ -1,7 +1,10 @@
-.delegation/
+.delegation/*
 .test-quarantine/
 logs/
 __pycache__/
 *.pyc
 *.egg-info/
 output/renders/
+
+# test fixtures are versioned; delegation notes stay ignored
+!.delegation/fixtures/
