@@ -1,0 +1,7 @@
+.delegation/
+.test-quarantine/
+logs/
+__pycache__/
+*.pyc
+*.egg-info/
+output/renders/

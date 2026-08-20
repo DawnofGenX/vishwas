@@ -1,0 +1,402 @@
+"""Model-weights inference adapter registry.
+
+Each weight family (EFFORT, DeMamba, Fake-Mamba, AASIST, SSL-audio, HAVIC,
+IMAGE_FACE) maps env-var -> Adapter with:
+  preprocess(raw) -> model input
+  extract_prob(model_output) -> float | None
+  load(path) -> object | None   (never raises; returns None on any failure)
+
+The capabilities call ``resolve(env_name)`` to get the adapter, then
+``run_check(adapter, weight_path, raw_input)`` for the (status, signals, notes)
+tuple.  Missing torch or an unreadable path yields status 'unavailable' and the
+capability emits its existing CheckResult verbatim — no regression.
+"""
+from __future__ import annotations
+
+import math
+import os
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Mel-spectrogram helper (numpy-only; no librosa/scipy assumed)
+# ---------------------------------------------------------------------------
+
+def compute_mel(
+    waveform: np.ndarray,
+    *,
+    sr: int = 16000,
+    n_mels: int = 128,
+    max_frames: int = 2000,
+    frame_len_ms: int = 25,
+    hop_ms: int = 10,
+) -> np.ndarray:
+    """1-D waveform -> (n_frames, n_mels) log-mel spectrogram.
+
+    - Triangular filterbank built from mel-scale boundaries.
+    - Padding/cropping to exactly *max_frames* rows (zero-pad tail or crop head).
+    - Returns shape (rows<=max_frames, cols==n_mels), finite, non-negative.
+    """
+    if waveform.ndim != 1:
+        waveform = waveform.squeeze()
+    # Ensure float32, normalise to [-1, 1] scale
+    wf = np.asarray(waveform, dtype=np.float32)
+    if wf.max() > 1.0:
+        wf = wf / (wf.max() + 1e-12)
+
+    win_size = int(sr * frame_len_ms / 1000)
+    hop = max(1, int(sr * hop_ms / 1000))
+    if len(wf) < win_size:
+        wf = np.pad(wf, (0, win_size - len(wf)))
+
+    n_frames_avail = (len(wf) - win_size) // hop + 1
+    n_frames = min(n_frames_avail, max_frames)
+    if n_frames <= 0:
+        return np.zeros((1, n_mels), dtype=np.float32)
+
+    # Short-time FFT
+    window = np.hanning(win_size).astype(np.float32)
+    frames = np.lib.stride_tricks.sliding_window_view(wf, win_size)[::hop][:n_frames]
+    stft = np.abs(np.fft.rfft(frames * window, axis=1)) ** 2
+    n_bins = stft.shape[1]  # win_size//2 + 1
+
+    # Triangular mel filterbank
+    def _hz_to_mel(hz):
+        return 2595.0 * np.log10(1.0 + hz / 700.0)
+
+    def _mel_to_hz(m):
+        return 700.0 * (10.0 ** (m / 2595.0) - 1.0)
+
+    mel_min = _hz_to_mel(0)
+    mel_max = _hz_to_mel(sr / 2)
+    mel_pts = np.linspace(mel_min, mel_max, n_mels + 2)
+    hz_pts = _mel_to_hz(mel_pts)
+    bin_pts = np.floor(hz_pts * n_bins / (sr / 2)).astype(int).clip(0, n_bins)
+
+    filters = np.zeros((n_mels, n_bins), dtype=np.float32)
+    for i in range(n_mels):
+        lo, mid, hi = bin_pts[i], bin_pts[i + 1], bin_pts[i + 2]
+        if mid <= lo:
+            continue
+        for j in range(lo, mid):
+            if mid > lo:
+                filters[i, j] = (j - lo) / (mid - lo)
+        for j in range(mid, hi):
+            if hi > mid:
+                filters[i, j] = (hi - j) / (hi - mid)
+
+    mel_spec = stft @ filters.T
+    mel_spec = np.log(mel_spec + 1e-9)
+    # Pad or crop to max_frames rows
+    if mel_spec.shape[0] < max_frames:
+        pad = np.zeros((max_frames - mel_spec.shape[0], n_mels), dtype=np.float32)
+        mel_spec = np.vstack([mel_spec, pad])
+    else:
+        mel_spec = mel_spec[:max_frames]
+    return mel_spec.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Adapter protocol
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Adapter:
+    """One entry in the ADAPTERS registry."""
+    env_name: str
+    family: str  # 'image' | 'audio' | 'video' | 'face'
+    preprocess: Callable[[Any], Any]
+    extract_prob: Callable[[Any], float | None] = field(default=None)  # type: ignore
+    _load: Callable[[str], Any] = field(default=None, repr=False)     # type: ignore
+
+    def __post_init__(self):
+        if self._load is None:
+            self._load = _default_load
+
+    # -- public API ----------------------------------------------------------
+    def load(self, path: str) -> Any:
+        """Load weights; return None on ANY failure. Never raises."""
+        try:
+            return self._load(path)
+        except Exception:
+            return None
+
+    def run(self, weight_path: str, raw_input: Any) -> tuple[str, dict, str]:
+        """Full check pipeline. Returns (status, signals, notes)."""
+        model = self.load(weight_path)
+        if model is None:
+            return "unavailable", {"missing_dependency": "model-weights"}, \
+                   f"{self.env_name} weights not provisioned or unreadable"
+        try:
+            processed = self.preprocess(raw_input)
+            out = _call_model(model, processed)
+            prob = self.extract_prob(out) if self.extract_prob else _auto_extract(out)
+            if prob is None:
+                return "failed", {}, "adapter could not extract probability from model output"
+            return "ok", {"prob_deepfake": round(prob, 3)}, "model inference succeeded"
+        except Exception as e:
+            return "degraded", {"error_class": type(e).__name__}, \
+                   f"inference error: {type(e).__name__}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _default_load(path: str) -> Any:
+    """torch.load with map_location='cpu'; returns None on any failure."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        import torch  # type: ignore
+        return torch.load(path, map_location="cpu", weights_only=False)
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _call_model(model: Any, processed: Any) -> Any:
+    """Call .predict, .forward, or __call__ — duck-typed, never raises here."""
+    if hasattr(model, "predict"):
+        return model.predict(processed)
+    if hasattr(model, "forward"):
+        import torch
+        with torch.no_grad():
+            return model.forward(torch.as_tensor(processed) if not isinstance(processed, (list, str, bytes)) else processed)
+    if callable(model):
+        return model(processed)
+    raise TypeError(f"model object of type {type(model).__name__} has no callable interface")
+
+
+def is_usable_model(obj: Any) -> bool:
+    """True iff obj can actually run inference (predict/forward/__call__).
+
+    Bare state-dict / tensor-container checkpoints (torch.save(model.state_dict()))
+    are NOT usable without the architecture class — treat them as unusable so
+    callers emit their normal 'unavailable' result rather than failing mid-scan.
+    """
+    if obj is None:
+        return False
+    return hasattr(obj, "predict") or hasattr(obj, "forward") or callable(obj)
+
+
+def _sigmoid(x: float) -> float:
+    if x > 60:
+        return 1.0
+    if x < -60:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _to_float(val: Any) -> float | None:
+    """First element of tensor/list/array -> float; clamp/sigmoid as needed."""
+    try:
+        if hasattr(val, "item"):  # torch.Tensor scalar
+            val = val.item()
+        if hasattr(val, "squeeze") and callable(getattr(val, "squeeze")):
+            arr = val.squeeze()
+            if getattr(arr, "ndim", 0) == 0:
+                val = float(arr)
+            else:
+                val = np.asarray(arr).flatten()[0]
+        if isinstance(val, (list, tuple)):
+            val = val[0] if val else 0.0
+        f = float(val)
+        if f > 1.0 or f < 0.0:
+            f = _sigmoid(f)  # out-of-probability-range outputs are treated as logits
+        return max(0.0, min(1.0, f))
+    except Exception:
+        return None
+
+
+def _auto_extract(output: Any) -> float | None:
+    return _to_float(output)
+
+
+# ---------------------------------------------------------------------------
+# Preprocess functions per family
+# ---------------------------------------------------------------------------
+
+def _img_resize_chw(frame_or_img: Any, size: int = 224) -> Any:
+    """BGR HWC uint8 -> CHW float32 [0,1]. Accepts np array or Path-like."""
+    arr = _ensure_ndarray(frame_or_img)
+    if arr is None:
+        return np.zeros((3, size, size), dtype=np.float32)
+    # Center-crop square then resize
+    h, w = arr.shape[:2]
+    s = min(h, w)
+    y0, x0 = (h - s) // 2, (w - s) // 2
+    crop = arr[y0:y0 + s, x0:x0 + s]
+    try:
+        import cv2  # type: ignore
+        resized = cv2.resize(crop, (size, size)).astype(np.float32) / 255.0
+    except Exception:
+        # numpy bilinear fallback
+        resized = _np_resize(crop, size).astype(np.float32) / 255.0
+    return np.transpose(resized, (2, 0, 1))
+
+
+def _np_resize(img: np.ndarray, size: int) -> np.ndarray:
+    """Naive nearest-neighbour resize (fallback when cv2 absent)."""
+    h, w = img.shape[:2]
+    idx = (np.arange(size) * h // size).astype(int)
+    idx2 = (np.arange(size) * w // size).astype(int)
+    return img[idx[:, None], idx2[None, :], :]
+
+
+def _ensure_ndarray(obj: Any) -> np.ndarray | None:
+    """Accepts np.ndarray, Path, str path, or raw bytes; returns HWC uint8 array."""
+    if isinstance(obj, np.ndarray):
+        return obj if obj.ndim >= 2 else None
+    # Path or str path to image file
+    path_str = None
+    if hasattr(obj, "__fspath__"):
+        path_str = os.fspath(obj)
+    elif isinstance(obj, str):
+        path_str = obj
+    if path_str and os.path.isfile(path_str):
+        try:
+            import cv2  # type: ignore
+            im = cv2.imread(path_str, cv2.IMREAD_COLOR)
+            return im
+        except Exception:
+            pass
+    return None
+
+
+def _wavform_from_path(path: Any) -> np.ndarray:
+    """Read WAV -> 1-D float32 waveform [-1,1]. Falls back to zeros."""
+    try:
+        import struct
+        raw = open(os.fspath(path) if hasattr(path, "__fspath__") else path, "rb").read()
+        if raw[:4] != b"RIFF":
+            return np.zeros(16000)
+        i = 12
+        while i + 8 <= len(raw):
+            cid = raw[i:i + 4]
+            sz = struct.unpack("<I", raw[i + 4:i + 8])[0]
+            if cid == b"data":
+                body = raw[i + 8:i + 8 + sz]
+                samples = struct.unpack(f"<{len(body) // 2}h", body[:len(body) // 2 * 2])
+                return np.asarray(samples, dtype=np.float32) / 32768.0
+            i += 8 + sz
+    except Exception:
+        pass
+    return np.zeros(16000, dtype=np.float32)
+
+
+def _seq_tensor(frame_list: list[Any], size: int = 224) -> np.ndarray:
+    """List of frames -> (N, 3, size, size) float32 tensor."""
+    tensors = []
+    for fr in frame_list[:16]:
+        t = _img_resize_chw(fr, size)
+        tensors.append(t)
+    if not tensors:
+        return np.zeros((1, 3, size, size), dtype=np.float32)
+    return np.stack(tensors).astype(np.float32)
+
+
+def _waveform_preprocess(raw: Any) -> np.ndarray:
+    """1-D waveform float32 (or wav path) -> model-ready 1-D array."""
+    if isinstance(raw, np.ndarray) and raw.ndim == 1:
+        return raw.astype(np.float32)
+    wf = _wavform_from_path(raw)
+    return wf
+
+
+def _mel_aasist_preprocess(raw: Any) -> np.ndarray:
+    """WAV path or waveform -> 2-D (<=2000, 128) log-mel matrix."""
+    wf = _waveform_preprocess(raw)
+    return compute_mel(wf)
+
+
+def _mel_ssl_preprocess(raw: Any) -> np.ndarray:
+    """Same mel pipeline, different head expectation (SSL complement)."""
+    wf = _waveform_preprocess(raw)
+    return compute_mel(wf)
+
+
+def _video_frame_preprocess(raw: Any) -> np.ndarray:
+    """Frame list or video path -> (N, 3, 224, 224) sequence tensor."""
+    if isinstance(raw, (list, tuple)):
+        return _seq_tensor(list(raw))
+    # single path — wrap in singleton list
+    return _seq_tensor([raw])
+
+
+def _face_crops_preprocess(raw: Any) -> np.ndarray:
+    """Face crop(s) -> (N, 3, 112, 112) embedding-style input."""
+    if isinstance(raw, np.ndarray):
+        if raw.ndim == 3:
+            return _img_resize_chw(raw, 112)[None]
+        if raw.ndim == 4:
+            batch = [_img_resize_chw(f, 112) for f in raw]
+            return np.stack(batch).astype(np.float32)
+    arr = _ensure_ndarray(raw)
+    if arr is None:
+        return np.zeros((1, 3, 112, 112), dtype=np.float32)
+    return _img_resize_chw(arr, 112)[None]
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+ADAPTERS: dict[str, Adapter] = {
+    "VERISAFE_EFFORT_WEIGHTS": Adapter(
+        env_name="VERISAFE_EFFORT_WEIGHTS",
+        family="image",
+        preprocess=_img_resize_chw,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_DEMAMBA_WEIGHTS": Adapter(
+        env_name="VERISAFE_DEMAMBA_WEIGHTS",
+        family="video",
+        preprocess=_video_frame_preprocess,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_FAKEMAMBA_WEIGHTS": Adapter(
+        env_name="VERISAFE_FAKEMAMBA_WEIGHTS",
+        family="audio",
+        preprocess=_waveform_preprocess,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_AASIST_WEIGHTS": Adapter(
+        env_name="VERISAFE_AASIST_WEIGHTS",
+        family="audio",
+        preprocess=_mel_aasist_preprocess,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_SSL_AUDIO_WEIGHTS": Adapter(
+        env_name="VERISAFE_SSL_AUDIO_WEIGHTS",
+        family="audio",
+        preprocess=_mel_ssl_preprocess,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_HAVIC_WEIGHTS": Adapter(
+        env_name="VERISAFE_HAVIC_WEIGHTS",
+        family="video",
+        preprocess=_video_frame_preprocess,
+        extract_prob=_auto_extract,
+    ),
+    "VERISAFE_IMAGE_FACE_WEIGHTS": Adapter(
+        env_name="VERISAFE_IMAGE_FACE_WEIGHTS",
+        family="face",
+        preprocess=_face_crops_preprocess,
+        extract_prob=_auto_extract,
+    ),
+}
+
+
+def resolve(env_name: str) -> Adapter | None:
+    """Return the Adapter for *env_name*, or None if unregistered."""
+    return ADAPTERS.get(env_name)
+
+
+def run_check(adapter: Adapter, weight_path: str, raw_input: Any) -> tuple[str, dict, str]:
+    """Convenience wrapper: adapter.run(weight_path, raw_input)."""
+    return adapter.run(weight_path, raw_input)

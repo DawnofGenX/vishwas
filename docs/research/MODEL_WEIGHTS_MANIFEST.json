@@ -1,0 +1,200 @@
+{
+  "generated_utc": "2026-08-19T00:00:00Z",
+  "source": "salvaged live probes deleg_52df5e95 task-0",
+  "gates": [
+    {
+      "gate": "effort",
+      "real": true,
+      "artifact": "YZY-stack/Effort-AIGI-Detection (arXiv 2411.15633)",
+      "url": null,
+      "sha256": "2fc1b97014b4..; 8d86711f098d..; 7c32ceb4e66d..",
+      "size_mb": 1213.77,
+      "license": "CC BY-NC 4.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "HEAVY",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "notes": "3 checkpoints (~1.21GB each) on GitHub; no publisher-published sha256",
+      "fetched": [
+        {
+          "file": "effort/chameleon/effort_chameleon.pth",
+          "bytes": 1213769519,
+          "size_mb": 1157.54,
+          "sha256_first12": "2fc1b97014b4",
+          "within_tol": true
+        },
+        {
+          "file": "effort/ffpp/effort_ffpp.pth",
+          "bytes": 1213769519,
+          "size_mb": 1157.54,
+          "sha256_first12": "8d86711f098d",
+          "within_tol": true
+        },
+        {
+          "file": "effort/genimage/effort_genimage.pth",
+          "bytes": 1213769519,
+          "size_mb": 1157.54,
+          "sha256_first12": "7c32ceb4e66d",
+          "within_tol": true
+        }
+      ]
+    },
+    {
+      "gate": "vbsta",
+      "real": false,
+      "artifact": null,
+      "url": null,
+      "sha256": null,
+      "size_mb": null,
+      "license": null,
+      "public_no_auth": false,
+      "cpu_viable_on_i5_8250U": "n/a",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "confirmed non-existent project (purged P10)"
+    },
+    {
+      "gate": "demamba",
+      "real": true,
+      "artifact": "chenhaoxing/DeMamba (arXiv 2405.19707)",
+      "url": null,
+      "sha256": null,
+      "size_mb": 5.96,
+      "license": "repo LICENSE (see chenhaoxing/DeMamba)",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "n/a",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "PARTIAL: source zip ONLY (5.96MB), NO public checkpoint yet \u2014 nothing loadable to download"
+    },
+    {
+      "gate": "fakemamba",
+      "real": true,
+      "artifact": "xxuan-acoustics/Fake-Mamba",
+      "url": null,
+      "sha256": null,
+      "size_mb": 0,
+      "license": null,
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "n/a",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "PARTIAL: README len=0, releases=[] \u2014 empty repo, no assets"
+    },
+    {
+      "gate": "aasist",
+      "real": true,
+      "artifact": "DeepFense/HABLA_WavLM_AASIST_NoAug_Seed42 (arXiv 2110.01200)",
+      "url": "https://huggingface.co/DeepFense/HABLA_WavLM_AASIST_NoAug_Seed42/resolve/main/best_model.pth",
+      "sha256": "febfc126a079..",
+      "size_mb": 3791.7,
+      "license": "MIT-ish (HF)",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "HEAVY",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "notes": "best_model.pth 3791.7MB",
+      "fetched": [
+        {
+          "file": "aasist/best_model.pth",
+          "bytes": 3791651367,
+          "size_mb": 3616.0,
+          "sha256_first12": "febfc126a079",
+          "within_tol": true,
+          "verified": "2026-08-20 full-sha256 recomputed, matches manifest + sidecar; torch.load OK (733-tensor model_state, 947.7M params); superseded dl-guard trip was a stale watch on an already-complete artifact"
+        }
+      ]
+    },
+    {
+      "gate": "ssl_audio",
+      "real": true,
+      "artifact": "facebook/wav2vec2-large-xlsr-300m / hubert-base-l6-large",
+      "url": "https://huggingface.co/facebook/wav2vec2-large-xlsr-300m/resolve/main/model.safetensors",
+      "sha256": null,
+      "size_mb": 1200,
+      "license": "Apache-2.0",
+      "public_no_auth": false,
+      "cpu_viable_on_i5_8250U": "moderate",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "HF returns 401 without token = false unauth; ~1.2GB est"
+    },
+    {
+      "gate": "havic",
+      "real": true,
+      "artifact": "JielunPeng/HAVIC (arXiv 2603.23960)",
+      "url": "https://huggingface.co/JielunPeng/HAVIC/resolve/main/best_ft_model.pth",
+      "sha256": "7a0e3ddc6eff..; a8c44dd5e1db..",
+      "size_mb": 858.8,
+      "license": "(HF)",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "HEAVY",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "notes": "best_ft_model.pth 858.8MB + pt_model.200.pth ~972.8MB companion",
+      "fetched": [
+        {
+          "file": "havic/best_ft/best_ft_model.pth",
+          "bytes": 858837738,
+          "size_mb": 819.05,
+          "sha256_first12": "7a0e3ddc6eff",
+          "within_tol": true
+        },
+        {
+          "file": "havic/pt200/pt_model.200.pth",
+          "bytes": 972770538,
+          "size_mb": 927.71,
+          "sha256_first12": "a8c44dd5e1db",
+          "within_tol": true
+        }
+      ]
+    },
+    {
+      "gate": "phishllm",
+      "real": false,
+      "artifact": null,
+      "url": null,
+      "sha256": null,
+      "size_mb": null,
+      "license": null,
+      "public_no_auth": false,
+      "cpu_viable_on_i5_8250U": "n/a",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "confirmed non-existent project (purged P10)"
+    },
+    {
+      "gate": "image_face",
+      "real": true,
+      "artifact": "FaceNet/ArcFace face-detector (existing cv2 gate)",
+      "url": null,
+      "sha256": null,
+      "size_mb": null,
+      "license": "varies",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "moderate",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "DEPS: see app.py IMAGE_FACE path \u2014 weights resolved via OpenCV/cv2 data, small size"
+    }
+  ],
+  "summary": {
+    "total_gates": 9,
+    "real_confirmed": 6,
+    "nonexistent": [
+      "vbsta",
+      "phishllm"
+    ],
+    "partial_no_checkpoint": [
+      "demamba",
+      "fakemamba"
+    ],
+    "deps_existing_cv2": [
+      "image_face"
+    ],
+    "public_no_auth_downloadable": [
+      "effort",
+      "aasist",
+      "havic"
+    ],
+    "requires_token": [
+      "ssl_audio"
+    ],
+    "heavy_cpu": [
+      "effort",
+      "aasist",
+      "havic"
+    ]
+  }
+}
