@@ -185,13 +185,53 @@ the env var is unset or the arch is unavailable.
 
 ## Test-suite state at this date
 
-`PYTHONPATH=src python3 -m pytest tests/ -q` → **241 passed, 2 skipped, 0 failed**
+`PYTHONPATH=src python3 -m pytest tests/ -q` → **252 passed, 3 skipped, 0 failed**
 (hermetic tree; skips are the pre-existing GPU/optional-dep cases). The one
 failure that existed before this file was written —
 `test_14_model_adapters.py::test_get_arch_lazy_registry` asserting the old
 stub contract for aasist — was updated to reflect that aasist is now vendored
 (environment-aware: real-torch tree expects `implemented=True`; hermetic
 stub-torch tree expects honest `None`). After EFFORT vendoring (Task 1.3) the
-same test moved effort into the vendored group (havic remains the only stub),
-and `tests/test_20_effort_arch.py` pins the EFFORT spec contract hermetically
-(same stub-torch pattern as test_19).
+same test moved effort into the vendored group, and after HAVIC vendoring
+(Task 1.4) havic joined it; `tests/test_19_aasist_arch.py`,
+`tests/test_20_effort_arch.py` and `tests/test_21_havic_arch.py` pin each
+spec's contract hermetically (same stub-torch pattern). Real-torch spot:
+test_14 + test_21 → 50 passed.
+
+---
+
+## Phase-1 proof bar — E2E CLI evidence (2026-08-21)
+
+Per the roadmap proof bar ("suite green is not enough"): full CLI runs through
+`scripts/run_verisafe.sh cli` with all three weight env vars provisioned,
+showing learned scores in the per-check evidence of real pipeline output.
+
+### Run 1 — audio fixture (`tests/fixtures/audio/smoke_5s.wav`, job_3e9cd7bc63c8)
+
+```
+[heavy] aasist_detector   ok  {"prob_deepfake": 0.997, "n_crops_scored": 3, "max_prob": 0.997}
+fusion: {"target": "deepfake_audio", "raw_score": 0.7693, ..., "usable_checks": 4}
+wall_s: 42.12   purged: true
+```
+Learned AASIST tier scored the real weights E2E (0.997 on a synthetic tone
+fixture — sanity only). Heuristic offline features ran alongside (0.2);
+fusion disagreement gate correctly flagged the divergence rather than hiding it.
+
+### Run 2 — AV clip (`/tmp/p1proof/clip_av.mp4`, 4s testsrc+sine, job_71437ed82ce0)
+
+```
+[heavy] effort_face_forensics   ok  {"prob_deepfake": 0.382, "n_frames_scored": 8, "max_prob": 0.426}
+[heavy] cross_modal_av          ok  {"av_correlation": 0.132, "alignment_class": "decorrelated"}
+[heavy] havic_crossmodal_model  ok  {"prob_inconsistent": 0.999}
+fusion: {"target": "deepfake_video", "raw_score": 0.2388, "calibrated": 0.8073,
+         "gate": {"ok": true}, "usable_checks": 6}
+stage_timings_s: DeepfakeVideoCapability 19.43, CrossModalCapability 11.72
+wall_s: 31.15   purged: true
+```
+All three learned families appear in ONE pipeline run: EFFORT frame scoring,
+HAVIC cross-modal consistency, plus the heuristic AV probe running alongside.
+Fusion gate passed; zero-retention held (purged=true).
+
+**Phase-1 verdict: PROOF BAR MET** — every gated family (aasist / effort /
+havic) loads REAL weights through the production seam and produces scores in
+the evidence JSON of an end-to-end CLI run.
