@@ -127,6 +127,21 @@ def append_audit(entry: dict) -> None:
         pass
 
 
+def count_open_quarantines(root: Path | None = None) -> int:
+    """Number of job dirs currently open (still present) under the root.
+
+    JobQuarantine.purge() removes the job dir itself, so a surviving
+    subdirectory means the job has not been closed yet (in flight, or left
+    behind by a crash until stale_sweep collects it). Best-effort: any read
+    error counts as 0 rather than breaking /health.
+    """
+    root = root or QUARANTINE_ROOT
+    try:
+        return sum(1 for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return 0
+
+
 def scan_stale_quarantines(root: Path | None = None, now: float | None = None) -> list[str]:
     """Remove job dirs whose manifest ts is older than STALE_TTL_S (crash safety)."""
     root = root or QUARANTINE_ROOT

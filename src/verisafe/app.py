@@ -6,7 +6,7 @@ Run modes:
              verisafe-cli --file /path/to/sample.apk [--lang hi]
              verisafe-cli --greet                (exercise greeting path only)
   webhook  — HTTP server speaking the OpenWA webhook contract on :PORT
-             POST /health        -> {status:"ok"}
+             GET  /health          -> rich JSON ops snapshot (see health_snapshot)
              POST /webhook/inbound -> parse event, run pipeline, reply via client
 All heavy deps are environment-gated; nothing here requires more than the
 Python stdlib to start (missing tools are reported per-check as unavailable).
@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -178,12 +179,50 @@ def _looks_like_url(s: str) -> bool:
 
 # --------------------------------------------------------------- webhook ----
 
+# Process-uptime anchor for /health (monotonic clock, survives NTP jumps).
+# Captured at module import; in practice that is process start for the
+# webhook entrypoint.
+_PROCESS_START_MONO = time.monotonic()
+
+
+def health_snapshot(processor, deps) -> dict:
+    """Build the rich GET /health payload (Task 2.3).
+
+    Schema:
+      status           "ok" while the process can serve at all
+      uptime_s         int seconds since process start (>= 0)
+      jobs_total       jobs started through MessageProcessor.process()
+      jobs_ok          jobs whose orchestrator run returned an outcome
+      jobs_failed      jobs whose orchestrator run raised
+      quarantines_open job dirs still present under the quarantine root
+      deps             {"available": [...], "count": N} — detect_available_deps()
+      deps_available   flat sorted list (backward-compat pre-2.3 field)
+
+    NOTE: jobs_* counters are in-memory and RESET TO ZERO on restart;
+    durable per-job evidence lives in outcomes.jsonl.
+    """
+    from verisafe.quarantine import count_open_quarantines  # lazy: env-gated paths
+    snap = processor.counters.snapshot() if processor is not None \
+        else {"jobs_total": 0, "jobs_ok": 0, "jobs_failed": 0}
+    dep_list = sorted(deps) if deps else []
+    return {
+        "status": "ok",
+        "uptime_s": max(0, int(time.monotonic() - _PROCESS_START_MONO)),
+        **snap,
+        "quarantines_open": count_open_quarantines(),
+        "deps": {"available": dep_list, "count": len(dep_list)},
+        # backward compat: pre-2.3 /health returned this exact flat list
+        "deps_available": dep_list,
+    }
+
+
 class WebhookHandler(BaseHTTPRequestHandler):
     processor: "MessageProcessor"   # injected by factory
 
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/health"):
-            body = json.dumps({"status": "ok", "deps": sorted(getattr(self, "_deps", []))}).encode()
+            body = json.dumps(health_snapshot(getattr(self, "processor", None),
+                                              getattr(self, "_deps", []))).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

@@ -27,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -253,6 +254,37 @@ def parse_openwa_webhook(payload: dict) -> InboundMessage | None:
 
 # ------------------------------------------------------------------ runner --
 
+class JobCounters:
+    """Thread-safe monotone job counters surfaced by GET /health.
+
+    In-memory only: counters reset to zero when the process restarts.
+    Durable per-job evidence lives in outcomes.jsonl (see _persist), not here.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._total = 0
+        self._ok = 0
+        self._failed = 0
+
+    def record_started(self) -> None:
+        with self._lock:
+            self._total += 1
+
+    def record_ok(self) -> None:
+        with self._lock:
+            self._ok += 1
+
+    def record_failed(self) -> None:
+        with self._lock:
+            self._failed += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"jobs_total": self._total, "jobs_ok": self._ok,
+                    "jobs_failed": self._failed}
+
+
 class MessageProcessor:
     """Binds orchestrator + channels + greeting/session state together."""
 
@@ -264,6 +296,8 @@ class MessageProcessor:
         self.session_state: dict[str, dict] = {}
         self.persist_outcomes = persist_outcomes
         self.outcome_log: Path | None = None
+        # 2.3 ops: /health job counters (ok/failed classification below).
+        self.counters = JobCounters()
         # 2.1: sessions explicitly closed while a heavy stage is still running;
         # follow-ups addressed to them are dropped silently (logged, no retry).
         self.closed_sessions: set[str] = set()
@@ -292,9 +326,18 @@ class MessageProcessor:
                                    "ts_mono": time.monotonic()})
             return self.deliver({"jid": chat_id, "reply": text})
 
+        # 2.3 ops: every pipeline run is one job. ok = orchestrator returned an
+        # outcome; failed = it raised (the webhook turns that into a generic
+        # apology reply). Counters are in-memory and reset on restart.
+        self.counters.record_started()
         try:
             outcome = self.orch.handle_incoming({**msg_dict, "_qroot_override": str(qwork)},
                                                 followup_sender=_followup_sender)
+        except Exception:
+            self.counters.record_failed()
+            raise
+        self.counters.record_ok()
+        try:
             replies: list[str] = []
             if greeting:
                 replies.append(greeting)
