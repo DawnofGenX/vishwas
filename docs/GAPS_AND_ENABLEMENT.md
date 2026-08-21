@@ -61,6 +61,34 @@ Review path for a native speaker: read one `docs/i18n/<lang>.draft.md`, correct/
 | `cross_modal` | **Good** (heuristic AV probe + learned HAVIC consistency LIVE 2026-08-21) | HAVIC arch vendored (`model_archs/havic.py` + `_havic/` backend, MIT), real-weight smoke load 8.6 s / infer 5.1 s per clip, NOT SLOW; numpy kaldi-fbank port validated vs torchaudio ≤5e-4; heuristic AV-correlation probe unchanged and still runs alongside |
 | `image_facecheck` | **Reduced** (integrity heuristics) | cv2 present; IMAGE_FACE weights absent (no public small-weight URL in manifest) |
 
+### Capability posture v2 — 2026-08-21 (roadmap P5 re-baseline; delta vs 2026-08-19)
+
+| Target | Aug-19 baseline | Now (2026-08-21) | What moved |
+|---|---|---|---|
+| `deepfake_audio` | Reduced (heuristics only) | **Good** | AASIST learned tier vendored + live (E2E-confirmed in CLI runs, not just adapter-level) |
+| `deepfake_video` | Reduced (heuristics only) | **Good** | EFFORT learned tier vendored + live; adversarial small-N check: STABLE under 6 codec/scale/fps transforms |
+| `cross_modal` | Reduced (consistency heuristics) | **Good** | HAVIC learned tier vendored + live (MIT, NOT SLOW at ~5 s/clip); heuristic AV probe still runs alongside |
+| `gov_document` | Moderate | **Good** | GPG union-keyring signature verify live; CA trust-store seeded (ISRG Root X1) + anchored-chain PAdES test |
+| `malicious_file` | Moderate | **Moderate** (unchanged rating; +entropy/PE confirmed live E2E) | ClamAV present but guard-bug-gated (Finding B in ZERO_RETENTION_E2E doc); YARA needs a rules bundle (Finding C) — both documented, unfixed by design this cycle |
+| `url_phishing` | Good | **Good** (unchanged) | VT reputation still cred-gated (T4.1 blocked-on-credentials) |
+| `image_facecheck` | Reduced | **Reduced** (unchanged) | weights simply don't exist publicly |
+
+**Delta paragraph (Aug-19 → Aug-21):** the headline move is the entire
+deepfake stack: three learned detectors (AASIST/EFFORT/HAVIC) went from
+weights-on-disk-but-unusable to vendored, real-weight-verified, wired through
+the arch-aware adapter seam, and confirmed inside real CLI runs — with
+adversarial sensitivity STABLE across codec/scale/framerate transforms.
+Supporting infrastructure landed alongside: non-blocking heavy follow-ups
+(deterministic templates, en+hi byte-exact), rich /health with job counters,
+stale-quarantine cron sweep (every 15 min), RAG freshness gating (14 d TTL +
+digest), 7-language i18n with placeholder-leak contract (5 langs DRAFT
+pending native review), CA trust-store + anchored PAdES, and full deployment
+artefacts (compose/webhook/systemd, `docker compose config` clean). Still
+gated exactly as documented: VT key, DigiLocker/API Setu creds, image_face
+weights, LLM narration, HF-token SSL-audio, no-public-checkpoint
+demamba/fakemamba. Honest gaps found during P5 and recorded (not patched):
+ClamAV guard bug, YARA rules-bundle absence, gov-doc CLI routing gap.
+
 ## Enabling priority (recommended order for this hardware)
 
 0. **Expose the isolated docling install** — `export PYTHONPATH=/home/hermes/docling-python` at service start. Already fully downloaded + model-cached in-dir (zero-cloud); instantly puts gov-document extraction on the structured-layout tier through the existing `docling` gate.
