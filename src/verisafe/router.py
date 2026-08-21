@@ -114,10 +114,11 @@ class Router:
     def target_for(self, d: RouteDecision, art=None) -> str:
         """Final target after magic-byte validation (orchestrator calls this)."""
         kind = getattr(art, "verified_kind", None)
-        h = self._hint(d, kind)
+        h = self._hint(d, kind, original_filename=getattr(art, "original_filename", ""))
         return h or "unclassified"
 
-    def _hint(self, d: RouteDecision, kind: MediaKind | None = None) -> str:
+    def _hint(self, d: RouteDecision, kind: MediaKind | None = None,
+              original_filename: str = "") -> str:
         k = kind or d.media_kind
         if d.is_url or (d.input_type is InputType.URL and d.url):
             return "url_phishing"
@@ -135,7 +136,12 @@ class Router:
         if k in _DOC_KINDS or k in (MediaKind.PLAIN_TEXT, MediaKind.HTML,
                                     MediaKind.SOURCE_CODE, MediaKind.JSON, MediaKind.CSV):
             blob = ((d.text_payload or "") + " ").lower()
-            if _GOV_HINTS.search(blob) or _looks_gov_artifact(art_filename=getattr(d, "target_hint", "") ):
+            # Finding D fix (2026-08-21): the real filename was never checked —
+            # only the target_hint string ("document_generic"), so a PDF named
+            # aadhaar.pdf always routed document_generic via CLI.
+            if (_GOV_HINTS.search(blob)
+                    or _looks_gov_artifact(art_filename=getattr(d, "target_hint", ""))
+                    or _looks_gov_artifact(art_filename=original_filename)):
                 return "gov_document"
             return "document_generic"
         if k in _EXEC_KINDS or k in _PKG_KINDS:
