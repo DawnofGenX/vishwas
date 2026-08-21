@@ -28,7 +28,8 @@ Per-stage wall time is recorded into `JobOutcome.fusion_trace.stage_timings_s` a
 | Transform battery (ffmpeg ×N variants) | 1–15s per variant set | up to ~15% |
 | Offline audio features (librosa-free numpy path) | 1–4s | ~1% |
 | AASIST learned audio (WavLM-Large, 3 crops) | **~15–23s** (measured 2026-08-21) | ~8% |
-| Deepfake video models (when weights available) | 60–240s | dominant remainder |
+| EFFORT learned video (ViT-L/14 303M + OrthAlign) | **~1.7s/frame** (measured 2026-08-21); ~5s for a 3-frame T2 stage | ~2–4% |
+| Deepfake video models (when weights available) | EFFORT ~1.7 s/frame (measured); HAVIC cross-modal pending | now minor, not dominant |
 | LLM interpretation (gated, optional) | 5–30s | ≤10% |
 
 **Rule:** heavy-model stages only start if ≥ their own expected runtime remains in the budget; the 10s floor above makes this automatic rather than ad-hoc.
@@ -77,7 +78,8 @@ Stages that still run after a trigger (light analysis families, currently `GovDo
 | Model | Fixture | Load | Inference | Tier | Date |
 |---|---|---|---|---|---|
 | AASIST (HABLA_WavLM_AASIST: WavLM-Large 315M + HtrgGAT) | `tests/fixtures/audio/smoke_5s.wav` (5 s @16 kHz mono) | 15.7 s (3.79 GB checkpoint → RAM + arch build) | **15.3 s** single inference (1 crop); ~23 s for the full 3-crop T2 stage in E2E | normal (cap 120 s; not SLOW) | 2026-08-21 |
+| EFFORT (CLIP-style ViT-L/14 303M + OrthAlign rank-1 residuals) | synthetic 224×224 frames + 2 known-real photos (label-order check) | 2.6 s skeleton build + 1.1 s torch.load (1.21 GB checkpoint) + 0.3 s apply_state (681/681 keys, 0 missing/unexpected) | **~1.7 s** per 224×224 frame; ~5 s for a 3-frame T2 stage | normal (cap 180 s; not SLOW) | 2026-08-21 |
 
-Notes: thermal held at 37 °C (acpitz) throughout the smoke — no SLOW-tier marking needed per Decision #3. The 3-crop T2 stage (`aasist_detector`) ran inside the default 300 s job budget with ~8% share. Evidence: `docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md`.
+Notes: thermal held at 37 °C (acpitz) throughout the AASIST smoke — no SLOW-tier marking needed per Decision #3. The 3-crop T2 stage (`aasist_detector`) ran inside the default 300 s job budget with ~8% share. EFFORT verify ran at 55 °C peak (normal tier); label order confirmed [real, fake] on known-real photos (fake posterior 0.29–0.35). Evidence: `docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md`.
 
 - Undervolt config `thermald-undervolt.xml` is staged for `sudo` install if idle temps creep above ~53C.

@@ -68,11 +68,25 @@ class ArchSpec:
         callers check the return value and discard the model on False.
         """
         if not isinstance(sd, dict) or not sd:
-            self.last_apply = {"ok": False, "error": "state-dict payload missing or empty"}
+            self.last_apply = {
+                "ok": False,
+                "frac_missing": 1.0,
+                "frac_unexpected": 0.0,
+                "missing": [],
+                "unexpected": [],
+                "error": "state-dict payload missing or empty",
+            }
             return False
         load_fn = getattr(model, "load_state_dict", None)
         if load_fn is None:
-            self.last_apply = {"ok": False, "error": "model has no load_state_dict"}
+            self.last_apply = {
+                "ok": False,
+                "frac_missing": 1.0,
+                "frac_unexpected": 0.0,
+                "missing": [],
+                "unexpected": [],
+                "error": "model has no load_state_dict",
+            }
             return False
         try:
             out = load_fn(sd, strict=False)

@@ -498,6 +498,14 @@ ADAPTERS: dict[str, Adapter] = {
         family="image",
         preprocess=_img_resize_chw,
         extract_prob=_auto_extract,
+        # Phase 1 Task 1.3: route through the arch-aware seam so a provisioned
+        # checkpoint loads as a READY ArchModelWrapper (.predict/.score ->
+        # calibrated fake/AIGC posterior). The arch (model_archs.effort) is a
+        # CLIP-style ViT-L/14 with OrthAlign self-attn; _img_resize_chw feeds
+        # (3,224,224) [0,1] CHW which score() ImageNet-normalises. Env unset /
+        # arch unavailable -> None + last_reason, T2 falls back unchanged.
+        _load=lambda p: _arch_aware_load(
+            p, "effort", env_name="VERISAFE_EFFORT_WEIGHTS"),
     ),
     "VERISAFE_DEMAMBA_WEIGHTS": Adapter(
         env_name="VERISAFE_DEMAMBA_WEIGHTS",

@@ -56,17 +56,82 @@ the env var is unset or the arch is unavailable.
 
 ---
 
-## EFFORT — spatial face/AIGI detector (deepfake_video) — PENDING (Task 1.3)
+## EFFORT — spatial face/AIGI detector (deepfake_video T2) — VENDORED ✅
 
-Checkpoints on disk (all three, sha256 sidecars written):
-- `effort/chameleon/effort_chameleon.pth` 1,213,769,519 B (sha `2fc1b970…`) — PRIMARY per Decision #2
-- `effort/ffpp/effort_ffpp.pth` 1,213,769,519 B (sha `8d86711f…`) — fallback
-- `effort/genimage/effort_genimage.pth` 1,213,769,519 B (sha `7c32ceb4…`) — fallback
+**Checkpoint (primary):** `/opt/verisafe/models/effort/chameleon/effort_chameleon.pth`
+**Provenance:** YZY-stack/Effort-AIGI-Detection, chameleon checkpoint (Decision #2 primary)
+**Arch class:** `src/verisafe/model_archs/effort.py` (`EffortSpec` / `_EffortNet`:
+CLIP-style ViT-L/14, 303.4 M params, 24 encoder layers, OrthAlign rank-1
+residuals on every self-attn projection). All three checkpoints probed to be
+architecturally identical (681 keys each; same layer-0 and non-layer counts),
+so one spec covers chameleon/ffpp/genimage.
 
-License: CC BY-NC 4.0 (YZY-stack/Effort-AIGI-Detection). Operator opt-in via
-`VERISAFE_EFFORT_WEIGHTS`; evidence record will carry `"license": "CC-BY-NC-4.0"`.
-No verification run yet — arch class still an honest stub
-(`build()` raises `ArchNotImplementedError`). Filled in Task 1.3.
+### Fresh verify run (this file's date)
+
+Command:
+```
+PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
+  python3 /tmp/verisafe-t13/verify_effort.py
+```
+
+| Check | Result |
+|-------|--------|
+| sha256 of on-disk weight | `2fc1b97014b456d5…` |
+| matches `.sha256` sidecar | ✅ true |
+| skeleton build (random init) | ok, **303.4 M params**, 2.55 s |
+| torch.load (1.21 GB) | 1.1 s, 681 keys |
+| `apply_state` key coverage | **ok=True, frac_missing=0.0, frac_unexpected=0.0** (681/681) |
+| forward pass (synthetic 224×224) | fake posterior 0.48–0.58 (value sanity only) |
+| inference wall-time | **~1.7 s** per frame (cap 180 s → NOT SLOW) |
+| max thermal zone during run | 55 °C peak (normal tier; no SLOW marking per Decision #3) |
+| overall | **PASS** |
+
+### Label-order confirmation (assumption E4)
+
+Known-REAL photos through the full cv2→resize→score path:
+
+| Input | fake posterior |
+|-------|---------------|
+| `/usr/share/backgrounds/Fuji_san_by_amaral.png` (real photo) | **0.2858** |
+| `/usr/share/backgrounds/Clouds_by_Tibor_Mokanszki.jpg` (real photo) | **0.3509** |
+
+Both well below 0.5 → head order `[real, fake]` confirmed; `score()` returns
+the fake-class probability as documented.
+
+**Full-seam smoke (2026-08-21):** `Adapter.load()` on the real checkpoint →
+`ArchModelWrapper` (8.0 s), `is_usable_model` True, then `adapter.run()` on a
+real photo through the exact `deepfake_video._effort` chain
+(`_load_model` + `_infer`: preprocess → `_call_model` → extract_prob):
+status `ok`, `prob_deepfake=0.286`, wrapper predict 1.36 s/frame — identical
+to the direct label-order number (0.2858), confirming the capability wiring
+is lossless.
+
+**Test_20 hardening pass (2026-08-21, real-torch run):** running
+`tests/test_20_effort_arch.py` under real torch (not just the hermetic stub
+tree) exposed three latent bugs, all fixed:
+1. `_OrthAlignLinear` init used `torch.empty` for bias/residuals → NaN in
+   random-init forward. Now `torch.zeros` + `nn.init.normal_(weight_main)`.
+2. `EffortSpec.apply_state` called `sd.items()` before the base None/empty
+   guard → AttributeError on empty payload. Now delegates to base first.
+3. `score()` accepted str/bytes and crashed inside `np.asarray`. Now raises
+   TypeError early. Also `_EffortNet.class_embedding` → `torch.zeros(dim)`
+   (was uninitialised memory).
+Result: **12/12 passed** under real torch; hermetic suite still 241 passed /
+2 skipped (test_20 skips there by design — needs real torch).
+
+Key-map provenance: verbatim 681-key map recorded in the module docstring of
+`model_archs/effort.py`, including the two reconstruction details that a naive
+CLIP-ViT-L would get wrong: `patch_embedding` has **no bias** and
+`position_embedding` is an `nn.Embedding(257,1024)` (key
+`position_embedding.weight`); the `pre_layrnorm` typo is preserved verbatim;
+the `module.` DataParallel prefix is stripped in `apply_state`.
+
+License: CC BY-NC 4.0 — operator opt-in via `VERISAFE_EFFORT_WEIGHTS`;
+evidence record carries `"license": "CC-BY-NC-4.0"`.
+
+**Status:** deepfake_video T2 now has a live learned scoring path behind the
+existing availability gate; heuristic fallback untouched and still active when
+the env var is unset or the arch is unavailable.
 
 ## HAVIC — holistic AV coherence (cross_modal) — PENDING (Task 1.4)
 
@@ -81,10 +146,13 @@ No verification run yet — arch class still an honest stub. Expected SLOW tier
 
 ## Test-suite state at this date
 
-`PYTHONPATH=src python3 -m pytest tests/ -q` → **241 passed, 1 skipped, 0 failed**
-(hermetic tree; the skip is the pre-existing GPU/optional-dep case). The one
+`PYTHONPATH=src python3 -m pytest tests/ -q` → **241 passed, 2 skipped, 0 failed**
+(hermetic tree; skips are the pre-existing GPU/optional-dep cases). The one
 failure that existed before this file was written —
 `test_14_model_adapters.py::test_get_arch_lazy_registry` asserting the old
 stub contract for aasist — was updated to reflect that aasist is now vendored
 (environment-aware: real-torch tree expects `implemented=True`; hermetic
-stub-torch tree expects honest `None`).
+stub-torch tree expects honest `None`). After EFFORT vendoring (Task 1.3) the
+same test moved effort into the vendored group (havic remains the only stub),
+and `tests/test_20_effort_arch.py` pins the EFFORT spec contract hermetically
+(same stub-torch pattern as test_19).

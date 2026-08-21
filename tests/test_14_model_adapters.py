@@ -388,35 +388,37 @@ def test_archspec_contract_defaults():
 def test_get_arch_lazy_registry(monkeypatch):
     from verisafe.model_archs import get_arch
 
-    # effort / havic are still honest stubs (tasks 1.3 / 1.4 pending):
-    # resolvable specs whose build() MUST raise — never silently work.
-    for fam, env in (("effort", "VERISAFE_EFFORT_WEIGHTS"),
-                     ("havic", "VERISAFE_HAVIC_WEIGHTS")):
-        got = get_arch(fam)
-        assert isinstance(got, ma.ArchSpec)
-        assert got.name == fam and got.weight_env == env
-        assert getattr(got, "implemented", False) is False
-        with pytest.raises(ma.ArchNotImplementedError):
-            got.build()
+    # havic is still an honest stub (task 1.4 pending): resolvable spec whose
+    # build() MUST raise — never silently work.
+    havic = get_arch("havic")
+    assert isinstance(havic, ma.ArchSpec)
+    assert havic.name == "havic" and havic.weight_env == "VERISAFE_HAVIC_WEIGHTS"
+    assert getattr(havic, "implemented", False) is False
+    with pytest.raises(ma.ArchNotImplementedError):
+        havic.build()
 
-    # aasist was vendored in task 1.2. Under REAL torch the spec resolves with
-    # implemented=True; under the hermetic stub-torch tree the module import
-    # fails (no torch.nn) and the registry honestly degrades to None.
+    # aasist (task 1.2) and effort (task 1.3) are vendored. Under REAL torch
+    # the specs resolve with implemented=True; under the hermetic stub-torch
+    # tree the module import fails (no torch.nn) and the registry honestly
+    # degrades to None.
     try:
         import torch.nn  # noqa: F401
         _real_torch = True
     except Exception:
         _real_torch = False
-    aasist = get_arch("aasist")
-    if _real_torch:
-        assert isinstance(aasist, ma.ArchSpec)
-        assert aasist.name == "aasist" and aasist.weight_env == "VERISAFE_AASIST_WEIGHTS"
-        assert aasist.implemented is True
-        # Vendored build() overrides the base stub. (Not invoked here: building
-        # the 315M-param WavLM-Large front-end costs ~15 s on this CPU.)
-        assert aasist.build.__func__ is not ma.ArchSpec.build
-    else:
-        assert aasist is None  # importable-but-broken -> honest None
+    for fam, env in (("aasist", "VERISAFE_AASIST_WEIGHTS"),
+                     ("effort", "VERISAFE_EFFORT_WEIGHTS")):
+        got = get_arch(fam)
+        if _real_torch:
+            assert isinstance(got, ma.ArchSpec)
+            assert got.name == fam and got.weight_env == env
+            assert got.implemented is True
+            # Vendored build() overrides the base stub. (Not invoked here:
+            # building the 315M-param WavLM / 303M-param ViT skeletons costs
+            # seconds-to-minutes on this CPU.)
+            assert got.build.__func__ is not ma.ArchSpec.build
+        else:
+            assert got is None  # importable-but-broken -> honest None
 
     assert get_arch("unknown_family_xyz") is None
 
