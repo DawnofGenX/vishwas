@@ -17,3 +17,19 @@ non-zero exit.
   `VERISAFE_QUARANTINE=...` / `VERISAFE_AUDIT_LOG=...` to point elsewhere).
 - **Audit log:** `logs/purge_audit.log` (one JSON line per purge/sweep;
   override with `VERISAFE_AUDIT_LOG`).
+
+## Rich `/health` (service observability)
+
+`GET /health` on the webhook service returns: `status`, `uptime_s`,
+`jobs_total` / `jobs_ok` / `jobs_failed` (thread-safe counters incremented in
+the `MessageProcessor.process()` outcome path), `quarantines_open`
+(subdirs under the quarantine root), and a `deps` summary
+(`{"available": [...], "count": N}`) plus the backward-compat flat
+`deps_available` list.
+
+- **Counters reset on restart** by design (no DB) — treat them as
+  since-last-restart figures, not lifetime totals.
+- **Daily check:** `curl -s localhost:2785/health | python3 -m json.tool`.
+- **Systemd:** see `deploy/verisafe.service.example` for a ready unit
+  (`Restart=on-failure`, `RestartSec=5`); install with the comment-block
+  steps at the top of that file.
