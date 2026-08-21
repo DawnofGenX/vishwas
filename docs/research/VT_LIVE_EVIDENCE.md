@@ -44,3 +44,13 @@ recorded as Finding E.
 - URL-reputation path works at the domain level; exact-url id lookup flaky
   (Finding E).
 - GAPS row `vt` flips ⚠️ → ✅ (with the Finding-E caveat recorded).
+
+## Resolution (2026-08-21, commit e83a69d)
+
+Finding E is FIXED: `check_url()` now falls back to `/domains/{host}` on a
+404 from the url-id endpoint (bare IPs excluded — the domains endpoint does
+not cover them). Live verification with the provisioned key:
+- `https://www.google.com/` 404 → 200, verdict low (0/91 malicious)
+- `http://malware.wicar.org/` 404 → 200, verdict **high**
+The url_phishing capability now gets real VT reputation even when the
+url-id lookup misses.
