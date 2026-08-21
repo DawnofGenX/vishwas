@@ -196,5 +196,17 @@
       "aasist",
       "havic"
     ]
+  },
+  "arch": {
+    "aasist": {
+      "vendored": false
+    },
+    "effort": {
+      "vendored": false,
+      "license": "CC-BY-NC-4.0"
+    },
+    "havic": {
+      "vendored": false
+    }
   }
 }

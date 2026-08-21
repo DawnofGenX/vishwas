@@ -10,6 +10,13 @@ The capabilities call ``resolve(env_name)`` to get the adapter, then
 ``run_check(adapter, weight_path, raw_input)`` for the (status, signals, notes)
 tuple.  Missing torch or an unreadable path yields status 'unavailable' and the
 capability emits its existing CheckResult verbatim — no regression.
+
+Arch-aware loading (Phase 1 / B0): gated families with a registered arch spec
+(aasist/effort/havic) load via :func:`_arch_aware_load`, which builds the
+network skeleton, verifies key-set coverage of the checkpoint's state dict,
+and returns a READY callable wrapper only when both succeed.  A loaded-but-not
+applicable checkpoint yields None plus ``last_reason = 'weight file loaded
+but architecture unavailable'`` on the adapter — never a half-loaded model.
 """
 from __future__ import annotations
 
@@ -19,6 +26,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import numpy as np
+
+from .model_archs import get_arch
+from .model_archs.base import ArchNotImplementedError, ArchSpec
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +113,15 @@ def compute_mel(
 # Adapter protocol
 # ---------------------------------------------------------------------------
 
+#: Single-slot holder so loaders (e.g. _arch_aware_load) can hand a failure
+#: reason back to Adapter.load() without changing any loader signature.
+_pending_load_reason: list[str | None] = [None]
+
+#: Sentinel distinguishing "arch argument omitted" from "arch=None" in
+#: _arch_aware_load (None means 'no arch for this family').
+_ARCH_UNSET = object()
+
+
 @dataclass
 class Adapter:
     """One entry in the ADAPTERS registry."""
@@ -111,6 +130,9 @@ class Adapter:
     preprocess: Callable[[Any], Any]
     extract_prob: Callable[[Any], float | None] = field(default=None)  # type: ignore
     _load: Callable[[str], Any] = field(default=None, repr=False)     # type: ignore
+    last_reason: str | None = field(default=None, repr=False)
+    """Records WHY the most recent load() returned None (e.g. the arch seam's
+    'weight file loaded but architecture unavailable'); None until set."""
 
     def __post_init__(self):
         if self._load is None:
@@ -118,11 +140,21 @@ class Adapter:
 
     # -- public API ----------------------------------------------------------
     def load(self, path: str) -> Any:
-        """Load weights; return None on ANY failure. Never raises."""
+        """Load weights; return None on ANY failure. Never raises.
+
+        When the loader records a failure reason (see ``_arch_aware_load``),
+        it is adopted into ``self.last_reason`` so callers can surface WHY the
+        weights were unusable (e.g. 'weight file loaded but architecture
+        unavailable') instead of a generic 'not provisioned' note.
+        """
+        _pending_load_reason[0] = None
         try:
-            return self._load(path)
+            obj = self._load(path)
         except Exception:
-            return None
+            obj = None
+        if obj is None and _pending_load_reason[0]:
+            self.last_reason = _pending_load_reason[0]
+        return obj
 
     def run(self, weight_path: str, raw_input: Any) -> tuple[str, dict, str]:
         """Full check pipeline. Returns (status, signals, notes)."""
@@ -157,6 +189,120 @@ def _default_load(path: str) -> Any:
         return None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Arch-aware loading seam (Phase 1 / B0)
+# ---------------------------------------------------------------------------
+
+#: env var -> arch family registered in verisafe.model_archs
+_ARCH_FAMILIES = {
+    "VERISAFE_AASIST_WEIGHTS": "aasist",
+    "VERISAFE_EFFORT_WEIGHTS": "effort",
+    "VERISAFE_HAVIC_WEIGHTS": "havic",
+}
+
+ARCH_UNAVAILABLE_REASON = "weight file loaded but architecture unavailable"
+
+
+def _extract_state_dict(raw: Any) -> Any:
+    """Pull the weight tensor-dict out of a checkpoint payload.
+
+    Handles flat state-dicts/OrderedDicts, and top-level training wrappers
+    (e.g. AASIST's ``{'model_state': ..., 'optimizer_state': ...}``).
+    Returns None when no tensor-dict payload is recognisable.
+    """
+    if isinstance(raw, dict):
+        for k in ("model_state", "state_dict", "model", "net"):
+            v = raw.get(k)
+            if isinstance(v, dict):
+                return v
+        return raw
+    return None
+
+
+class ArchModelWrapper:
+    """READY callable returned by :func:`_arch_aware_load` once the skeleton
+    was built AND the checkpoint applied cleanly.
+
+    Exposes ``.predict(x) -> float`` (and ``.score``) so the existing
+    ``_call_model`` duck-typing and ``is_usable_model`` keep working; the
+    float is the ArchSpec's calibrated [0,1] posterior.
+    """
+
+    def __init__(self, model: Any, spec: ArchSpec):
+        self.model = model
+        self.spec = spec
+
+    def predict(self, x: Any) -> float:
+        return self.spec.score(self.model, x)
+
+    def score(self, x: Any) -> float:
+        return self.spec.score(self.model, x)
+
+
+def _arch_aware_load(path: str, family: str | None = None, *,
+                     env_name: str | None = None,
+                     raw_load: Callable[[str], Any] | None = None,
+                     arch: Any = _ARCH_UNSET) -> Any:
+    """Load-order seam for gated model families (plan Phase 1 / B0).
+
+    (a) env var unset/missing -> None (behavior unchanged, no reason recorded);
+    (b) env set, arch module importable AND ``apply_state`` True -> READY
+        :class:`ArchModelWrapper` (callable, .predict/.score);
+    (c) otherwise -> None + ``ARCH_UNAVAILABLE_REASON`` handed back through
+        ``_pending_load_reason`` so ``Adapter.load()`` records it on
+        ``adapter.last_reason`` (the notes channel capabilities surface).
+
+    *raw_load* overrides the checkpoint reader (tests inject fakes); *arch*
+    overrides the registry lookup (pass an ArchSpec instance, or None to force
+    'no arch'; omit to consult the registry). Existing heuristic fallbacks are
+    untouched either way.
+    """
+    env = env_name if env_name is not None else (family or "").upper()
+    if env:
+        p_env = os.environ.get(env)
+        if not p_env or not os.path.exists(p_env):
+            return None  # (a) env gate — unchanged behaviour
+    if not path or not os.path.exists(path):
+        return None
+    loader = raw_load if raw_load is not None else _default_load
+    try:
+        raw = loader(path)
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    # Already a usable inference object (full-model checkpoint) — legacy path.
+    if is_usable_model(raw):
+        return raw
+    sd = _extract_state_dict(raw)
+    if sd is None:
+        return None
+    if arch is _ARCH_UNSET:
+        fam = family or _ARCH_FAMILIES.get(env, "")
+        spec = get_arch(fam) if fam else None
+    else:
+        spec = arch
+    if spec is None:
+        _pending_load_reason[0] = ARCH_UNAVAILABLE_REASON
+        return None  # (c) no arch for this family
+    try:
+        model = spec.build()
+    except ArchNotImplementedError:
+        _pending_load_reason[0] = ARCH_UNAVAILABLE_REASON
+        return None  # (c) stub: arch module present, build() not yet vendored
+    except Exception:
+        _pending_load_reason[0] = ARCH_UNAVAILABLE_REASON
+        return None
+    try:
+        ok = bool(spec.apply_state(model, sd))
+    except Exception:
+        ok = False
+    if not ok:
+        _pending_load_reason[0] = ARCH_UNAVAILABLE_REASON
+        return None  # (c) shape/key mismatch — never half-load
+    return ArchModelWrapper(model, spec)  # (b) READY
 
 
 def _call_model(model: Any, processed: Any) -> Any:

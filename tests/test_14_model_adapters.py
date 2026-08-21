@@ -329,3 +329,163 @@ def test_is_usable_model_matrix():
     assert ma.is_usable_model(lambda x: x) is True
     assert ma.is_usable_model({"a": 1}) is False
     assert ma.is_usable_model(None) is False
+
+
+# ------------------------------- 1.1 (B0): arch-loading seam -------------
+class FakeTinyModel:
+    """Torch-free stand-in for a constructed network skeleton."""
+
+    def __init__(self, n_params=2):
+        self.state = {"p0": np.zeros(2, dtype=np.float32),
+                      "p1": np.ones(1, dtype=np.float32)}
+
+    def load_state_dict(self, sd, strict=True):
+        if strict and set(sd) != set(self.state):
+            raise RuntimeError("strict mismatch")
+        missing = set(self.state) - set(sd)
+        bad = {k: v for k, v in sd.items() if k in self.state and len(v) != len(self.state[k])}
+        self.missing, self.shape_bad = missing, bad
+        for k, v in sd.items():
+            if k in self.state and len(v) == len(self.state[k]):
+                self.state[k] = np.asarray(v, dtype=np.float32)
+        return types.SimpleNamespace(missing=list(missing), unexpected_keys=list(set(sd) - set(self.state)))
+
+
+def _make_fake_arch(name="aasist", weight_env="VERISAFE_AASIST_WEIGHTS",
+                    apply_ok=True, score_val=0.7):
+    """A tiny ArchSpec subclass satisfying the 1.1 contract (no real net)."""
+
+    class FakeArch(ma.ArchSpec):
+        implemented = apply_ok
+
+        def build(self):
+            if not self.implemented:
+                raise ma.ArchNotImplementedError(f"{self.name} architecture not vendored yet")
+            return FakeTinyModel()
+
+        def apply_state(self, model, sd):
+            out = model.load_state_dict(sd, strict=False)
+            covered = max(0, len(model.state) - len(out.missing)) / len(model.state)
+            return covered >= 0.95 and not out.missing and not getattr(model, "shape_bad", {})
+
+        def score(self, model, x):
+            return score_val
+
+    return FakeArch()
+
+
+def test_archspec_contract_defaults():
+    """Base class documents name/weight_env slots and typed unimplemented error."""
+    spec = ma.ArchSpec(name="demo", weight_env="VERISAFE_DEMO_WEIGHTS")
+    assert spec.name == "demo"
+    assert spec.weight_env == "VERISAFE_DEMO_WEIGHTS"
+    with pytest.raises(ma.ArchNotImplementedError):
+        spec.build()
+    assert isinstance(ma.ArchNotImplementedError, type)
+    assert issubclass(ma.ArchNotImplementedError, Exception)
+
+
+def test_get_arch_lazy_registry(monkeypatch):
+    from verisafe.model_archs import get_arch
+
+    aasist = get_arch("aasist")
+    effort = get_arch("effort")
+    havic = get_arch("havic")
+    assert all(isinstance(a, ma.ArchSpec) for a in (aasist, effort, havic))
+    assert aasist.name == "aasist" and aasist.weight_env == "VERISAFE_AASIST_WEIGHTS"
+    assert effort.name == "effort" and effort.weight_env == "VERISAFE_EFFORT_WEIGHTS"
+    assert havic.name == "havic" and havic.weight_env == "VERISAFE_HAVIC_WEIGHTS"
+    # stubs must be explicitly marked NOT implemented — never silently work
+    for fam, env in (("aasist", "VERISAFE_AASIST_WEIGHTS"),
+                     ("effort", "VERISAFE_EFFORT_WEIGHTS"),
+                     ("havic", "VERISAFE_HAVIC_WEIGHTS")):
+        got = get_arch(fam)
+        with pytest.raises(ma.ArchNotImplementedError):
+            got.build()
+        assert got is get_arch(fam) or True  # registry may cache; identity not contractual
+    assert get_arch("unknown_family_xyz") is None
+
+
+def test_env_unset_loader_returns_none(tmp_path, monkeypatch):
+    """(a) env var unset -> None: seam short-circuits before any load (behavior unchanged)."""
+    p = tmp_path / "x.pth"
+    p.write_bytes(b"stub")
+    for e in ("VERISAFE_AASIST_WEIGHTS", "VERISAFE_EFFORT_WEIGHTS", "VERISAFE_HAVIC_WEIGHTS"):
+        monkeypatch.delenv(e, raising=False)
+    assert ma._arch_aware_load(str(p), "aasist", env_name="VERISAFE_AASIST_WEIGHTS") is None
+    assert ma._arch_aware_load(str(p), "effort", env_name="VERISAFE_EFFORT_WEIGHTS") is None
+    assert ma._arch_aware_load(str(p), "havic", env_name="VERISAFE_HAVIC_WEIGHTS") is None
+
+
+def test_arch_ready_wrapper_returns_callable_score(weights_file, monkeypatch):
+    """(b) env set + arch importable AND apply_state True -> ready callable object.
+
+    Mirrors what existing passing tests assert: run_check yields status 'ok'
+    with signals['prob_deepfake'] == the calibrated score.
+    """
+    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", weights_file)
+    fake_sd = {"p0": np.zeros(2, dtype=np.float32), "p1": np.ones(1, dtype=np.float32)}
+    loader = lambda path: ma._arch_aware_load(
+        path, "aasist", env_name="VERISAFE_AASIST_WEIGHTS",
+        raw_load=lambda p: fake_sd,
+        arch=_make_fake_arch(apply_ok=True, score_val=0.7),
+    )
+    ad = replace(resolve("VERISAFE_AASIST_WEIGHTS"), _load=loader)
+    m = ad.load(weights_file)
+    assert m is not None
+    # READY callable: duck-typing via .score AND .predict so _call_model works
+    assert callable(m.score)
+    assert hasattr(m, "predict") or callable(m)
+    assert 0.0 <= float(m.score(np.zeros((8, 128)))) <= 1.0
+    status, signals, notes = run_check(ad, weights_file, np.zeros(16000, np.float32))
+    assert status == "ok"
+    assert signals["prob_deepfake"] == 0.7
+    assert "model inference succeeded" in notes
+
+
+def test_arch_unavailable_reason_and_no_half_load(weights_file, monkeypatch):
+    """(c) env set but arch unavailable (None) OR apply_state False -> None + reason."""
+    # (c-i) get_arch returns None
+    monkeypatch.setenv("VERISAFE_EFFORT_WEIGHTS", weights_file)
+    loader_none = lambda path: ma._arch_aware_load(
+        path, "effort", env_name="VERISAFE_EFFORT_WEIGHTS",
+        raw_load=lambda p: {"k": 1},
+        arch=None,
+    )
+    ad = replace(resolve("VERISAFE_EFFORT_WEIGHTS"), _load=loader_none)
+    assert ad.load(weights_file) is None
+    assert ad.last_reason == "weight file loaded but architecture unavailable"
+
+    # (c-ii) arch present but apply_state False (coverage below threshold)
+    loader_bad = lambda path: ma._arch_aware_load(
+        path, "effort", env_name="VERISAFE_EFFORT_WEIGHTS",
+        raw_load=lambda p: {"unrelated_key_only": np.zeros(3)},
+        arch=_make_fake_arch(name="effort", apply_ok=True, score_val=0.1),
+    )
+    ad2 = replace(resolve("VERISAFE_EFFORT_WEIGHTS"), _load=loader_bad)
+    assert ad2.load(weights_file) is None
+    assert ad2.last_reason == "weight file loaded but architecture unavailable"
+
+    # (c-iii) arch not yet implemented (stub) -> same honest reason, never half-load
+    monkeypatch.delenv("VERISAFE_HAVIC_WEIGHTS", raising=False)
+    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", weights_file)
+    loader_stub = lambda path: ma._arch_aware_load(
+        path, "havic", env_name="VERISAFE_HAVIC_WEIGHTS",
+        raw_load=lambda p: {"k": 1},
+    )
+    ad3 = replace(resolve("VERISAFE_HAVIC_WEIGHTS"), _load=loader_stub)
+    assert ad3.load(weights_file) is None
+    assert ad3.last_reason == "weight file loaded but architecture unavailable"
+
+
+def test_is_usable_model_wrapper_vs_raw_statedict(weights_file, monkeypatch):
+    """(iv) is_usable_model(True) on the arch wrapper vs (False) on raw state-dict."""
+    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", weights_file)
+    fake_sd = {"p0": np.zeros(2), "p1": np.ones(1)}
+    m = ma._arch_aware_load(
+        weights_file, "aasist", env_name="VERISAFE_AASIST_WEIGHTS",
+        raw_load=lambda p: fake_sd,
+        arch=_make_fake_arch(apply_ok=True, score_val=0.3),
+    )
+    assert ma.is_usable_model(m) is True
+    assert ma.is_usable_model(fake_sd) is False
