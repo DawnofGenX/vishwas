@@ -116,6 +116,15 @@ QR_SCHEMES = [
 ]
 
 
+def _sha256_file(path: Path) -> str:
+    """sha256 hex of the catalog file -> recorded in the index as provenance."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def load_issuer_trust(digest_path: Path) -> tuple[dict, str]:
     """Class (b): dedupe issuers across all queries by issuerId."""
     d = json.loads(digest_path.read_text())
@@ -255,6 +264,10 @@ def build(cache_dir: Path, version: str, do_network: bool) -> dict:
         "version": version,
         "built_utc": _now(),
         "staleness_days": STALENESS_DAYS,
+        # Provenance for the reader's freshness gate (rag_cache.cache_freshness):
+        # sha256 of the catalog file this build consumed; the reader recomputes
+        # it against the LATEST catalog file and marks the cache stale on drift.
+        "source_digest": {"file": DIGEST.name, "sha256": _sha256_file(DIGEST)},
         "entries": {
             "document_templates": {
                 k: {"sha256": None, "source_url": None, "fetched_utc": None,

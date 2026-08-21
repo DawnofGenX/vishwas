@@ -48,8 +48,18 @@ class ReportBuilder:
         if tip:
             parts.append(tip)
         skipped = [c.name for c in checks if c.status == "unavailable"]
-        if skipped and verdict in (Verdict.CAUTION, Verdict.DO_NOT_USE, Verdict.UNABLE_TO_VERIFY):
-            parts.append(t("evidence_missing", lang))
+        # Freshness-gate drops (e.g. gov-template-cache-stale) surface as
+        # machine tokens on the SAME evidence_missing line; the translated
+        # sentence stays untouched, the token list is language-neutral.
+        gap_tokens = sorted({str(c.signals["evidence_gap"]) for c in checks
+                             if isinstance(c.signals, dict)
+                             and c.signals.get("evidence_gap")})
+        gaps = skipped + gap_tokens
+        if gaps and verdict in (Verdict.CAUTION, Verdict.DO_NOT_USE, Verdict.UNABLE_TO_VERIFY):
+            line = t("evidence_missing", lang)
+            if gap_tokens:
+                line += " [" + ", ".join(gap_tokens) + "]"
+            parts.append(line)
         if llm_advice and verdict not in (Verdict.UNABLE_TO_VERIFY,):
             # keep templates first (trust anchor); LLM adds context after
             parts.append(llm_advice.strip())

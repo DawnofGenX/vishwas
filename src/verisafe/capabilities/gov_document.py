@@ -549,6 +549,19 @@ class GovDocumentCapability:
             return [CheckResult("rag_template_cache", "cheap", "skipped",
                                 {"cache_version": self.rag_version},
                                 "no local template cache yet; nothing to compare against")]
+        # Cache-level freshness gate (14d TTL + source-digest match): a stale
+        # cache drops its confidence contribution SILENTLY — same surface as
+        # an absent cache, never an error. evidence_gap token lets the report
+        # layer name the drop on its evidence_missing line.
+        cache_fresh, stale_reason = rc.cache_freshness(index)
+        if not cache_fresh:
+            return [CheckResult("rag_template_cache", "cheap", "skipped",
+                                {"cache_version": self.rag_version,
+                                 "cache_stale": True,
+                                 "stale_reason": stale_reason,
+                                 "evidence_gap": "gov-template-cache-stale"},
+                                f"template cache failed freshness gate ({stale_reason}); "
+                                "retrieval-cache signal dropped")]
         entry = rc.template_for(doc_type, index)
         if not entry or str(entry.get("version")) != str(self.rag_version):
             return [CheckResult("rag_template_cache", "cheap", "skipped",
