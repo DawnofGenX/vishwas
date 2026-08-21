@@ -264,6 +264,15 @@ class MessageProcessor:
         self.session_state: dict[str, dict] = {}
         self.persist_outcomes = persist_outcomes
         self.outcome_log: Path | None = None
+        # 2.1: sessions explicitly closed while a heavy stage is still running;
+        # follow-ups addressed to them are dropped silently (logged, no retry).
+        self.closed_sessions: set[str] = set()
+        # every composed follow-up that reached the sender (for CLI/tests)
+        self.followups: list[dict] = []
+
+    def end_session(self, sid: str) -> None:
+        """Mark a chat session closed: later heavy-stage follow-ups drop."""
+        self.closed_sessions.add(sid)
 
     def process(self, msg_dict: dict) -> dict:
         """Returns the delivery payload {jid, reply, verdict...} for this message."""
@@ -273,8 +282,19 @@ class MessageProcessor:
         st = self.session_state.setdefault(sid, {})
         qwork = self.workdir / sid[:24]
         qwork.mkdir(parents=True, exist_ok=True)
+
+        def _followup_sender(chat_id: str, text: str) -> bool:
+            if chat_id in self.closed_sessions:
+                print(f"[verisafe] session {chat_id} ended before its deep check "
+                      f"finished; heavy follow-up dropped silently", flush=True)
+                return False
+            self.followups.append({"jid": chat_id, "reply": text,
+                                   "ts_mono": time.monotonic()})
+            return self.deliver({"jid": chat_id, "reply": text})
+
         try:
-            outcome = self.orch.handle_incoming({**msg_dict, "_qroot_override": str(qwork)})
+            outcome = self.orch.handle_incoming({**msg_dict, "_qroot_override": str(qwork)},
+                                                followup_sender=_followup_sender)
             replies: list[str] = []
             if greeting:
                 replies.append(greeting)
@@ -329,4 +349,16 @@ class CLISimulator:
     @staticmethod
     def run_once(orchestrator, msg_dict: dict) -> dict:
         proc = MessageProcessor(orchestrator, openwa=None, persist_outcomes=False)
-        return proc.process(msg_dict)
+        res = proc.process(msg_dict)
+        # 2.1: if a heavy stage is still running, wait and print its
+        # deterministic template follow-up inline (no-op transport works the
+        # same way — composition is independent of delivery).
+        waiter = getattr(orchestrator, "wait_for_pending_followups", None)
+        if waiter is not None:
+            waiter(timeout_s=float(os.environ.get("VERISAFE_FOLLOWUP_WAIT_S", "120")))
+        if proc.followups:
+            for fu in proc.followups:
+                print(fu["reply"])
+            res["followups"] = [{"jid": f["jid"], "reply": f["reply"]}
+                                for f in proc.followups]
+        return res

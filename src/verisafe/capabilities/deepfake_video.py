@@ -50,6 +50,7 @@ def _load_model(cls_name: str, weights_env: str):
 
 class DeepfakeVideoCapability:
     requires: tuple[str, ...] = ()
+    stage_cost = "heavy"   # 2.1: eligible for non-blocking budget + follow-up
 
     def analyze(self, art: Artifact, ctx: JobContext) -> list[CheckResult]:
         out: list[CheckResult] = []

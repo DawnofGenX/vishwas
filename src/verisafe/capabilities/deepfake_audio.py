@@ -68,6 +68,7 @@ def _infer_prob(adapter, model, raw_input) -> float | None:
 
 class DeepfakeAudioCapability:
     requires: tuple[str, ...] = ()
+    stage_cost = "heavy"   # 2.1: eligible for non-blocking budget + follow-up
 
     def analyze(self, art: Artifact, ctx: JobContext) -> list[CheckResult]:
         out: list[CheckResult] = []

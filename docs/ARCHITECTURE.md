@@ -135,6 +135,21 @@ verbatim. Deployment (compose + webhook wiring) is documented in `docs/DEPLOYMEN
 * **ReliabilityGate.** Returns `(ok: bool, notes: [])`. A failed gate downgrades the
   verdict and appends plain-language "could not test X" notes to the reply.
 
+### 4.1 Non-blocking heavy stages (`pending_heavy` follow-ups)
+
+* T2 learned stages (`stage_cost = "heavy"`: AASIST audio, EFFORT video, HAVIC
+  cross-modal) get a per-stage budget (`VERISAFE_HEAVY_STAGE_BUDGET_S`, default 30s).
+* Over budget, the orchestrator stops *waiting*, not the work: the stage keeps running in a
+  dedicated **sequential** background pool (`max_workers=1` — heavy inference is never
+  parallelized on the CPU-only laptop), and the fast verdict ships immediately with
+  `pending_heavy: [{cap, expected_s}]` evidence plus a plain-language "update coming" notice.
+* On completion the follow-up is composed from the `heavy_followup` i18n template ONLY
+  (deterministic wording + fused confidence number — never LLM-generated) and delivered via
+  `MessageProcessor.deliver`; the CLI simulator prints it inline.
+* If the user session ended first (`MessageProcessor.end_session`), the follow-up is dropped
+  silently with a stdout log — no retry queue. Any exception in the follow-up path becomes a
+  logged CheckResult-style failure record; it never raises out of `process()`.
+
 ---
 
 ## 5. Threat model summary (full table in P9)

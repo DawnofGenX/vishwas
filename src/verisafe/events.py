@@ -111,6 +111,9 @@ class JobContext:
     deadline_mono: float = field(default_factory=time.monotonic)
     wall_budget_s: float = 300.0
     extra: dict[str, Any] = field(default_factory=dict)
+    # 2.1: persisted at job start so a background heavy-stage follow-up can
+    # reach the user after the fast verdict already shipped.
+    chat_id: str | None = None
 
     def remaining_s(self) -> float:
         return max(0.0, self.deadline_mono - time.monotonic())

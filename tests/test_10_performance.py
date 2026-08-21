@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from verisafe.events import Artifact, InputType, JobContext, Verdict
 from verisafe.fusion import FusionEngine, ReliabilityGate
+from verisafe.i18n import t
 from verisafe.report import ReportBuilder
 from verisafe.orchestrator import Orchestrator, _has_confirmed_danger
 from verisafe.capabilities.base import CheckResult
@@ -177,3 +178,104 @@ def test_outcome_serializes_with_new_fields(clean_artifact, qroot):
     d = out.to_dict()
     assert isinstance(d["wall_s"], float)
     assert "stage_timings_s" in out.fusion_trace
+
+
+# --------------------------------------- non-blocking heavy follow-ups (2.1) --
+class SlowLearnedCap(CapBase):
+    """Stand-in for a T2 learned stage (aasist/effort/havic): slow, heavy."""
+    stage_cost = "heavy"
+
+    def __init__(self, delay: float = 1.5, prob: float = 0.81):
+        super().__init__()
+        self.delay = delay
+        self.prob = prob
+
+    def _checks(self):
+        time.sleep(self.delay)
+        return [CheckResult("learned_probe", "heavy", "ok",
+                            {"prob_deepfake": self.prob})]
+
+
+def _make_orch2(caps: list, heavy_stage_budget_s: float):
+    return Orchestrator(capabilities_by_target={"unclassified": caps},
+                        fusion=FusionEngine(), reliability=ReliabilityGate(),
+                        reporter=ReportBuilder(), hard_budget_s=300,
+                        heavy_stage_budget_s=heavy_stage_budget_s,
+                        available_deps=set())
+
+
+def _probe_batch(prob: float) -> list[CheckResult]:
+    return [CheckResult("learned_probe", "heavy", "ok", {"prob_deepfake": prob})]
+
+
+def _expected_followup(orch: Orchestrator, batch: list[CheckResult],
+                       cap_name: str, lang: str) -> str:
+    """Deterministic expectation: same fusion + template the impl must use."""
+    fused = orch.fusion.decide("unclassified", batch)
+    return t("heavy_followup", lang, cap=cap_name,
+             verdict=t(ReportBuilder.VERDICT_KEY[fused.verdict], lang),
+             conf=f"{int(round(fused.confidence * 100))}%")
+
+
+def test_heavy_over_budget_ships_fast_with_pending_evidence(clean_artifact, qroot):
+    """Stage over its budget -> verdict ships NOW with pending_heavy evidence
+    plus the plain-language notice; the stage still finishes in background."""
+    clean, slow = CleanCap(), SlowLearnedCap(delay=1.6)
+    orch = _make_orch2([clean, slow], heavy_stage_budget_s=1.0)
+    out = orch.handle_incoming({"id": "j-pend", "text": "check this file",
+                                "_qroot_override": str(qroot)})
+    assert out.fusion_trace.get("pending_heavy") == \
+        [{"cap": "SlowLearnedCap", "expected_s": 1}]
+    assert t("heavy_pending_notice", "en") in out.user_message
+    assert out.wall_s < 1.6, f"verdict waited for the slow stage ({out.wall_s}s)"
+    assert orch.wait_for_pending_followups(timeout_s=15)
+    assert slow.calls, "background stage must still run to completion"
+
+
+def test_followup_fires_within_cap_margin_en(tmp_path):
+    slow = SlowLearnedCap(delay=1.5)
+    orch = _make_orch2([slow], heavy_stage_budget_s=0.4)
+    from verisafe.channels import MessageProcessor
+    proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
+                            workdir=tmp_path)
+    t0 = time.monotonic()
+    res = proc.process({"id": "sess-en", "text": "check this", "sender_lang": "en"})
+    assert res["outcome"]["fusion_trace"]["pending_heavy"]
+    assert orch.wait_for_pending_followups(timeout_s=15)
+    assert len(proc.followups) == 1, "exactly one follow-up expected"
+    fu = proc.followups[0]
+    assert fu["jid"] == "sess-en"
+    assert fu["ts_mono"] - t0 <= slow.delay + 2.0, \
+        f"follow-up too late: {fu['ts_mono'] - t0:.2f}s"
+    assert fu["reply"] == _expected_followup(orch, _probe_batch(slow.prob),
+                                             "SlowLearnedCap", "en")
+
+
+def test_followup_template_exact_hi(tmp_path):
+    slow = SlowLearnedCap(delay=1.2)
+    orch = _make_orch2([slow], heavy_stage_budget_s=0.3)
+    from verisafe.channels import MessageProcessor
+    proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
+                            workdir=tmp_path)
+    proc.process({"id": "sess-hi", "text": "यह जाँचो", "sender_lang": "hi"})
+    assert orch.wait_for_pending_followups(timeout_s=15)
+    assert len(proc.followups) == 1
+    reply = proc.followups[0]["reply"]
+    assert reply == _expected_followup(orch, _probe_batch(slow.prob),
+                                       "SlowLearnedCap", "hi")
+    assert "गहरा जाँच" in reply, "hi template must be used, not the en fallback"
+
+
+def test_session_ended_drops_followup_silently(tmp_path, capsys):
+    slow = SlowLearnedCap(delay=1.2)
+    orch = _make_orch2([slow], heavy_stage_budget_s=0.3)
+    from verisafe.channels import MessageProcessor
+    proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
+                            workdir=tmp_path)
+    proc.process({"id": "sess-dead", "text": "check this", "sender_lang": "en"})
+    proc.end_session("sess-dead")          # user session ends mid-check
+    assert orch.wait_for_pending_followups(timeout_s=15)
+    assert proc.followups == [], "no follow-up may be delivered to a dead session"
+    out = capsys.readouterr().out
+    assert "sess-dead" in out and "dropped" in out, \
+        "drop must be logged to stdout"

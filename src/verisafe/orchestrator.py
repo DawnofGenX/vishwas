@@ -14,16 +14,18 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FTimeout
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FTimeout
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .capabilities.base import Capability, CheckResult
 from .events import Artifact, InputType, JobContext, Verdict, new_job_id
 from .file_validator import FileValidator
 from .fusion import FusionEngine, ReliabilityGate
+from .i18n import t
 from .quarantine import JobQuarantine
 from .report import ReportBuilder
 from .router import Router, RouteDecision
@@ -32,6 +34,10 @@ log = logging.getLogger("verisafe.orchestrator")
 
 _HEAVY_POOL = 2                    # thermal-safe concurrency for heavy stages
 _HARD_BUDGET_MULT = 2.0
+
+
+def _default_heavy_stage_budget() -> float:
+    return float(os.environ.get("VERISAFE_HEAVY_STAGE_BUDGET_S", "30"))
 
 
 @dataclass(slots=True)
@@ -113,7 +119,9 @@ class Orchestrator:
                  i18n_lang_default: str = "en",
                  hard_budget_s: float = 300.0,
                  greeting_enabled: bool = True,
-                 available_deps: set[str] | None = None):
+                 available_deps: set[str] | None = None,
+                 heavy_stage_budget_s: float | None = None,
+                 followup_sender: Callable[[str, str], bool] | None = None):
         self.capabilities = capabilities_by_target     # target-name -> ordered capabilities
         self.fusion = fusion
         self.reliability = reliability
@@ -125,10 +133,28 @@ class Orchestrator:
         self.greeting_enabled = greeting_enabled
         self.available_deps = available_deps or set()  # empty => everything gated off except cheap
         self._pool = ThreadPoolExecutor(max_workers=_HEAVY_POOL + 2)
+        # 2.1 non-blocking heavy stages: ONE worker — learned inference is
+        # never parallelized (CPU-only laptop, thermal constraint). A stage
+        # that outlives its per-stage budget keeps running here while the
+        # fast verdict ships; its follow-up is composed on completion.
+        self.heavy_stage_budget_s = (heavy_stage_budget_s
+                                     if heavy_stage_budget_s is not None
+                                     else _default_heavy_stage_budget())
+        self.default_followup_sender = followup_sender
+        self._heavy_pool = ThreadPoolExecutor(max_workers=1,
+                                              thread_name_prefix="verisafe-heavy-seq")
+        self._pending_lock = threading.Lock()
+        self._pending_futs: list[Future] = []
 
     # ------------------------------------------------------------ public --
-    def handle_incoming(self, msg: dict) -> JobOutcome:
-        """msg: {id, text?, media_path?, media_type?, sender_lang?}."""
+    def handle_incoming(self, msg: dict,
+                        followup_sender: Callable[[str, str], bool] | None = None) -> JobOutcome:
+        """msg: {id, text?, media_path?, media_type?, sender_lang?}.
+
+        followup_sender(chat_id, text) is called (from the background pool)
+        when a heavy stage that outlived its budget finally finishes; it may
+        be None, in which case a composed follow-up is only logged.
+        """
         job_id = new_job_id()
         qroot = Path(msg.pop("_qroot_override", None) or _default_qroot())
         qroot.mkdir(parents=True, exist_ok=True)
@@ -146,8 +172,11 @@ class Orchestrator:
                              vt_api_key=(os.environ.get("VERISAFE_VT_API_KEY") if "vt" in self.available_deps else None),
                              llm_available="llm" in self.available_deps,
                              pades_available="pades" in self.available_deps,
-                             rag_cache_available="rag-cache" in self.available_deps)
-            outcome = self._run(artifact, ctx, decision, lang, q)
+                             rag_cache_available="rag-cache" in self.available_deps,
+                             chat_id=str(msg.get("chat_id") or msg.get("session_key")
+                                         or msg.get("id") or "") or None)
+            outcome = self._run(artifact, ctx, decision, lang, q,
+                                followup_sender=followup_sender)
         outcome.purged = True
         return outcome
 
@@ -170,7 +199,8 @@ class Orchestrator:
             art = make_artifact(workdir, "message.txt", kind_input, data=(decision.text or "").encode())
         return art
 
-    def _run(self, art: Artifact, ctx: JobContext, decision: RouteDecision, lang: str, q: JobQuarantine) -> JobOutcome:
+    def _run(self, art: Artifact, ctx: JobContext, decision: RouteDecision, lang: str,
+             q: JobQuarantine, followup_sender: Callable[[str, str], bool] | None = None) -> JobOutcome:
         t0 = time.monotonic()
         target = self.router.target_for(decision, art)
         caps = self.capabilities.get(target, [])
@@ -191,6 +221,7 @@ class Orchestrator:
 
         stage_timings: dict[str, float] = {}
         short_circuited: str | None = None
+        pending_heavy: list[dict[str, Any]] = []
         for cap in caps:
             cap_name = cap.__class__.__name__
             needed = [d for d in getattr(cap, "requires", ()) if d not in self.available_deps]
@@ -221,9 +252,25 @@ class Orchestrator:
                 continue
             last_batch: list[CheckResult] = []
             t_stage = time.monotonic()
+            pending_fut: Future | None = None
             try:
-                last_batch = cap.analyze(art, ctx)
+                if getattr(cap, "stage_cost", "") == "heavy":
+                    # 2.1: heavy learned stages run under a per-stage budget.
+                    # Over budget -> stop WAITING (never stop the work): the
+                    # stage keeps running in the sequential background pool
+                    # and the fast verdict ships with pending_heavy evidence.
+                    pending_fut = self._heavy_pool.submit(cap.analyze, art, ctx)
+                    last_batch = pending_fut.result(timeout=self.heavy_stage_budget_s)
+                else:
+                    last_batch = cap.analyze(art, ctx)
                 results.extend(last_batch)
+            except FTimeout:
+                stage_timings[cap_name] = round(time.monotonic() - t_stage, 2)
+                pending_heavy.append({"cap": cap_name,
+                                      "expected_s": max(1, int(round(self.heavy_stage_budget_s)))})
+                self._arm_heavy_followup(cap_name, pending_fut, ctx, lang,
+                                         target, followup_sender)
+                continue
             except Exception as e:  # noqa: BLE001 — isolation by contract
                 log.exception("capability %s crashed", cap)
                 results.append(CheckResult(name=f"{cap_name}.crash", cost="mid",
@@ -255,6 +302,9 @@ class Orchestrator:
                                      checks=results,
                                      lang=lang,
                                      artifact_name=art.original_filename)
+        if pending_heavy:
+            # plain-language promise that a deeper result will arrive later
+            report.text = report.text + "\n\n" + t("heavy_pending_notice", lang)
         outcome = JobOutcome(job_id=ctx.job_id,
                             verdict=fused.verdict,
                             confidence=round(fused.confidence, 3),
@@ -273,11 +323,77 @@ class Orchestrator:
                                 # P8 ops visibility: per-stage wall time + early-stop marker
                                 "stage_timings_s": stage_timings,
                                 "short_circuited_at": short_circuited,
+                                # 2.1: heavy stages still running in the background
+                                "pending_heavy": pending_heavy,
                             },
                             wall_s=round(time.monotonic() - t0, 2),
                             purged=False)
         ctx.note(f"verdict={fused.verdict.value} conf={outcome.confidence} reasons={len(fused.reasons)}")
         return outcome
+
+    # ------------------------------------------- background heavy follow-up --
+    def _arm_heavy_followup(self, cap_name: str, fut: Future | None, ctx: JobContext,
+                            lang: str, target: str,
+                            sender: Callable[[str, str], bool] | None) -> None:
+        """Compose + deliver a DETERMINISTIC template follow-up when a heavy
+        stage that outlived its budget finally finishes. Template-only: i18n
+        wording + fused confidence number; never an LLM. Any exception in this
+        path is logged with a CheckResult-style failure record — it must never
+        raise out of process()."""
+        if fut is None:
+            return
+        with self._pending_lock:
+            self._pending_futs.append(fut)
+
+        def _done(f: Future) -> None:
+            try:
+                batch = f.result()
+                fused = self.fusion.decide(target, batch)
+                text = t("heavy_followup", lang,
+                         cap=cap_name,
+                         verdict=t(ReportBuilder.VERDICT_KEY[fused.verdict], lang),
+                         conf=f"{int(round(fused.confidence * 100))}%")
+                send = sender or self.default_followup_sender
+                if ctx.chat_id and send is not None:
+                    try:
+                        send(ctx.chat_id, text)
+                    except Exception:  # noqa: BLE001 — delivery is best-effort
+                        log.exception("follow-up delivery failed (job %s)", ctx.job_id)
+                else:
+                    log.info("job %s: heavy follow-up composed but no transport/chat_id; dropped",
+                             ctx.job_id)
+            except Exception as e:  # noqa: BLE001 — never raise from a callback
+                log.exception("late heavy stage %s follow-up path failed", cap_name)
+                rec = CheckResult(name=f"{cap_name}.followup_failed", cost="mid",
+                                  status="failed",
+                                  signals={"exception": f"{e.__class__.__name__}:{str(e)[:80]}"},
+                                  notes="background stage follow-up failed; recorded, never raised")
+                print(f"[verisafe] followup failure record job={ctx.job_id} "
+                      f"check={rec.name} status={rec.status} signals={rec.signals}",
+                      flush=True)
+            finally:
+                with self._pending_lock:
+                    try:
+                        self._pending_futs.remove(f)
+                    except ValueError:
+                        pass
+
+        fut.add_done_callback(_done)
+
+    def wait_for_pending_followups(self, timeout_s: float | None = None) -> bool:
+        """Block until every armed background heavy stage has settled.
+
+        Dev/CLI/test helper — the production message loop never waits.
+        Returns True when nothing is pending, False on timeout."""
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
+        while True:
+            with self._pending_lock:
+                pending = list(self._pending_futs)
+            if not pending:
+                return True
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            time.sleep(0.05)
 
 
 def _quick_lang(text: str) -> str:

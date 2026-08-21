@@ -113,6 +113,7 @@ def _lagged_crosscorr(a: list[float], b: list[float], max_lag_ms: int = 200, tgr
 
 class CrossModalCapability:
     requires: tuple[str, ...] = ()
+    stage_cost = "heavy"   # 2.1: eligible for non-blocking budget + follow-up
 
     def analyze(self, art: Artifact, ctx: JobContext) -> list[CheckResult]:
         out: list[CheckResult] = []
