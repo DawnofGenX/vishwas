@@ -19,6 +19,7 @@ Design constraints:
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import os
 import time
@@ -27,6 +28,15 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+
+def _is_ip_address(host: str) -> bool:
+    """Domains endpoint doesn't cover bare IPs; keep those on the url path."""
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 VT_BASE = "https://www.virustotal.com/api/v3"
 TIMEOUT_S = 20
@@ -93,13 +103,22 @@ class VtClient:
 
     # ------------------------------------------------------------ public --
     def check_url(self, url: str) -> VtResult:
-        return self._get(f"/urls/{base64url(url)}")
+        res = self._get(f"/urls/{base64url(url)}")
+        # Finding E fix (2026-08-21): exact-url id lookups flakily 404 even for
+        # known URLs (VT's url-id normalisation is scheme/trailing-slash
+        # sensitive). Fall back to the domain endpoint, which is stable.
+        if res.raw_status == 404:
+            parsed = urllib.parse.urlparse(url)
+            host = parsed.hostname or ""
+            if host and not _is_ip_address(host):
+                return self._get(f"/domains/{host}", fallback_note=url)
+        return res
 
     def check_hash(self, sha256: str) -> VtResult:
         return self._get(f"/files/{sha256}")
 
     # ----------------------------------------------------------- internal --
-    def _get(self, path: str) -> VtResult:
+    def _get(self, path: str, fallback_note: str = "") -> VtResult:
         key = api_key()
         if not key:
             return VtResult(status="unavailable", note="VirusTotal API key not provisioned")
