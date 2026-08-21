@@ -29,7 +29,7 @@ Per-stage wall time is recorded into `JobOutcome.fusion_trace.stage_timings_s` a
 | Offline audio features (librosa-free numpy path) | 1–4s | ~1% |
 | AASIST learned audio (WavLM-Large, 3 crops) | **~15–23s** (measured 2026-08-21) | ~8% |
 | EFFORT learned video (ViT-L/14 303M + OrthAlign) | **~1.7s/frame** (measured 2026-08-21); ~5s for a 3-frame T2 stage | ~2–4% |
-| Deepfake video models (when weights available) | EFFORT ~1.7 s/frame (measured); HAVIC cross-modal pending | now minor, not dominant |
+| Deepfake video models (when weights available) | EFFORT ~1.7 s/frame (measured); HAVIC cross-modal **~5.1 s/clip** (measured 2026-08-21) | now minor, not dominant |
 | LLM interpretation (gated, optional) | 5–30s | ≤10% |
 
 **Rule:** heavy-model stages only start if ≥ their own expected runtime remains in the budget; the 10s floor above makes this automatic rather than ad-hoc.

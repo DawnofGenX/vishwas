@@ -29,6 +29,7 @@ from verisafe.model_adapters import ADAPTERS, Adapter, compute_mel, resolve, run
 from verisafe.capabilities import deepfake_audio as daudio
 from verisafe.capabilities import deepfake_video as dvideo
 from verisafe.capabilities import image_facecheck as iface
+from verisafe.capabilities import cross_modal as xmod
 
 SEVEN_ENVS = [
     "VERISAFE_EFFORT_WEIGHTS",
@@ -388,24 +389,29 @@ def test_archspec_contract_defaults():
 def test_get_arch_lazy_registry(monkeypatch):
     from verisafe.model_archs import get_arch
 
-    # havic is still an honest stub (task 1.4 pending): resolvable spec whose
-    # build() MUST raise — never silently work.
-    havic = get_arch("havic")
-    assert isinstance(havic, ma.ArchSpec)
-    assert havic.name == "havic" and havic.weight_env == "VERISAFE_HAVIC_WEIGHTS"
-    assert getattr(havic, "implemented", False) is False
-    with pytest.raises(ma.ArchNotImplementedError):
-        havic.build()
-
-    # aasist (task 1.2) and effort (task 1.3) are vendored. Under REAL torch
-    # the specs resolve with implemented=True; under the hermetic stub-torch
-    # tree the module import fails (no torch.nn) and the registry honestly
-    # degrades to None.
     try:
         import torch.nn  # noqa: F401
         _real_torch = True
     except Exception:
         _real_torch = False
+
+    # havic (task 1.4a) is vendored. Its spec module is torch-free at import
+    # time, so the registry resolves it with implemented=True in BOTH trees;
+    # only build() needs real torch — under the hermetic stub-torch tree it
+    # raises ArchNotImplementedError (honest degradation, never half-load).
+    havic = get_arch("havic")
+    assert isinstance(havic, ma.ArchSpec)
+    assert havic.name == "havic" and havic.weight_env == "VERISAFE_HAVIC_WEIGHTS"
+    assert getattr(havic, "implemented", False) is True
+    assert havic.build.__func__ is not ma.ArchSpec.build
+    if not _real_torch:
+        with pytest.raises(ma.ArchNotImplementedError):
+            havic.build()
+
+    # aasist (task 1.2) and effort (task 1.3) are vendored. Under REAL torch
+    # the specs resolve with implemented=True; under the hermetic stub-torch
+    # tree the module import fails (no torch.nn) and the registry honestly
+    # degrades to None.
     for fam, env in (("aasist", "VERISAFE_AASIST_WEIGHTS"),
                      ("effort", "VERISAFE_EFFORT_WEIGHTS")):
         got = get_arch(fam)
@@ -506,3 +512,199 @@ def test_is_usable_model_wrapper_vs_raw_statedict(weights_file, monkeypatch):
     )
     assert ma.is_usable_model(m) is True
     assert ma.is_usable_model(fake_sd) is False
+
+
+# ----------------------------- 1.4: cross-modal HAVIC wiring ---------------
+class FakeHavicWrapper:
+    """Duck-typed ArchModelWrapper: .predict((audio, video)) -> float."""
+
+    def __init__(self, p=0.42):
+        self.p = p
+        self.calls: list = []
+
+    def predict(self, x):
+        self.calls.append(x)
+        return self.p
+
+
+class RaisingHavicWrapper:
+    def predict(self, x):
+        raise RuntimeError("simulated HAVIC forward failure")
+
+
+def _havic_env_unset(monkeypatch):
+    monkeypatch.delenv("VERISAFE_HAVIC_WEIGHTS", raising=False)
+
+
+def test_havic_load_none_when_env_unset(monkeypatch):
+    """Env unset -> None BEFORE any adapter work (unavailable path preserved)."""
+    _havic_env_unset(monkeypatch)
+    assert xmod._load_havic() is None
+
+
+def test_havic_load_none_when_path_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", str(tmp_path / "absent.pth"))
+    assert xmod._load_havic() is None
+
+
+def test_havic_registry_routes_through_arch_seam(weights_file, monkeypatch):
+    """Registry adapter for HAVIC carries the arch-aware _load override now:
+    a bare state-dict payload must never come back usable (no half-loads).
+    Hermetic stub-torch tree: build() raises ArchNotImplementedError -> None.
+    Real torch tree: coverage <95% on a 1-key payload -> same honest None."""
+    import pickle
+
+    try:
+        import torch.nn  # noqa: F401
+        _real_torch = True
+    except Exception:
+        _real_torch = False
+
+    sd = {"audio_encoder.blocks.0.qkv.weight": np.zeros((4, 4), np.float32)}
+    sd_path = Path(weights_file).parent / "havic_sd_only.pt"
+    if _real_torch:
+        import torch  # real tree: torch.save so _default_load can actually read it
+        torch.save(sd, str(sd_path))
+    else:
+        # Hermetic stub tree: bytes content is irrelevant — every load path
+        # fails before arch logic and the reason assertion below is skipped.
+        with open(sd_path, "wb") as f:
+            pickle.dump(sd, f)
+    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", str(sd_path))
+    assert xmod._load_havic() is None  # unusable in BOTH trees, never a dict
+    if _real_torch:
+        ad = resolve("VERISAFE_HAVIC_WEIGHTS")
+        assert ad.last_reason == ma.ARCH_UNAVAILABLE_REASON
+
+
+def test_havic_check_unavailable_shape(tmp_path):
+    """_load_havic() None -> the exact unavailable CheckResult (verbatim notes)."""
+    r = xmod._havic_check(None, tmp_path / "v.mp4", tmp_path / "a.wav", tmp_path)
+    assert r.name == "havic_crossmodal_model"
+    assert r.cost == "heavy"
+    assert r.status == "unavailable"
+    assert r.signals == {"missing_dependency": "model-weights"}
+    assert "HAVIC weights not provisioned (VERISAFE_HAVIC_WEIGHTS)" in r.notes
+
+
+def test_havic_check_ok_shape_with_fake_adapter(monkeypatch, tmp_path):
+    """Fake ready wrapper + stubbed preprocess -> ok CheckResult with the
+    clamped posterior; the wrapper receives the (audio, video) pair."""
+    audio = np.zeros((1024, 128), np.float32)
+    video = np.zeros((3, 16, 224, 224), np.float32)
+    monkeypatch.setattr(xmod, "_havic_preprocess",
+                        lambda vp, wav, wd: (audio, video))
+    w = FakeHavicWrapper(0.42)
+    r = xmod._havic_check(w, tmp_path / "v.mp4", tmp_path / "a.wav", tmp_path)
+    assert r.name == "havic_crossmodal_model"
+    assert r.cost == "heavy"
+    assert r.status == "ok"
+    assert r.signals == {"prob_inconsistent": 0.42}
+    assert "HAVIC learned cross-modal consistency pass" in r.notes
+    assert len(w.calls) == 1
+    got_audio, got_video = w.calls[0]
+    assert got_audio.shape == (1024, 128)
+    assert got_video.shape == (3, 16, 224, 224)
+
+
+def test_havic_check_ok_clamps_out_of_range_scores(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        xmod, "_havic_preprocess",
+        lambda vp, wav, wd: (np.zeros((1024, 128), np.float32),
+                             np.zeros((3, 16, 224, 224), np.float32)))
+    hi = xmod._havic_check(FakeHavicWrapper(1.7), tmp_path / "v", tmp_path / "a", tmp_path)
+    lo = xmod._havic_check(FakeHavicWrapper(-0.3), tmp_path / "v", tmp_path / "a", tmp_path)
+    assert hi.signals["prob_inconsistent"] == 1.0
+    assert lo.signals["prob_inconsistent"] == 0.0
+
+
+def test_havic_check_failed_shape_never_raises(monkeypatch, tmp_path):
+    """Preprocess failure AND predict failure both -> failed + error_class."""
+    def _boom(vp, wav, wd):
+        raise ValueError("no frames extracted")
+    monkeypatch.setattr(xmod, "_havic_preprocess", _boom)
+    r = xmod._havic_check(FakeHavicWrapper(), tmp_path / "v", tmp_path / "a", tmp_path)
+    assert r.status == "failed"
+    assert r.signals == {"error_class": "ValueError"}
+    assert "HAVIC inference error" in r.notes
+
+    monkeypatch.setattr(
+        xmod, "_havic_preprocess",
+        lambda vp, wav, wd: (np.zeros((1024, 128), np.float32),
+                             np.zeros((3, 16, 224, 224), np.float32)))
+    r2 = xmod._havic_check(RaisingHavicWrapper(), tmp_path / "v", tmp_path / "a", tmp_path)
+    assert r2.status == "failed"
+    assert r2.signals == {"error_class": "RuntimeError"}
+
+
+# ------------------------------------------------- 1.4 preprocessing sanity --
+def test_kaldi_fbank_shape_finite_tone_band():
+    sr = 16000
+    t = np.arange(sr * 4, dtype=np.float32) / sr
+    wave = (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+    fb = xmod._kaldi_fbank(wave)
+    assert fb.shape == (1024, 128)
+    assert fb.dtype == np.float32
+    assert np.all(np.isfinite(fb))
+    # A pure 220 Hz tone must peak in a low/mid mel filter and rows must vary.
+    col_energy = fb.mean(axis=0)
+    peak_col = int(np.argmax(col_energy))
+    assert 5 <= peak_col <= 60, f"220 Hz peaked at mel col {peak_col}"
+    assert float(fb.std()) > 0.0
+
+
+def test_kaldi_fbank_short_input_padded():
+    fb = xmod._kaldi_fbank(np.zeros(250, dtype=np.float32))  # < one frame
+    assert fb.shape == (1024, 128)
+    assert np.all(np.isfinite(fb))
+
+
+def test_havic_visual_tensor_shape_and_pad(tmp_path):
+    import cv2
+    frames = []
+    for i in range(4):
+        p = tmp_path / f"f{i}.png"
+        assert cv2.imwrite(str(p), np.full((64, 48, 3), i * 30 + 10, np.uint8))
+        frames.append(p)
+    v = xmod._havic_visual(frames, n=16)
+    assert v.shape == (3, 16, 224, 224)
+    assert v.dtype == np.float32
+    assert float(v.min()) >= 0.0 and float(v.max()) <= 1.0
+    # frames 0..3 distinct; index 4+ repeat the last decodable frame
+    assert not np.allclose(v[:, 0], v[:, 1])
+    assert np.allclose(v[:, 3], v[:, 4])
+    assert np.allclose(v[:, 15], v[:, 4])
+
+
+def test_havic_preprocess_pairs_audio_and_video(monkeypatch, tmp_path):
+    """Real glue: WAV bytes -> _load_pcm -> fbank(+normalisation); PNG frames
+    -> visual tensor. extract_frames stubbed to skip ffmpeg."""
+    import cv2
+    import struct
+
+    def _write_wav(path, pcm, sr=16000):
+        data = b"".join(
+            struct.pack("<h", int(max(-1.0, min(1.0, float(s))) * 32767)) for s in pcm)
+        hdr = (b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt "
+               + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16)
+               + b"data" + struct.pack("<I", len(data)))
+        path.write_bytes(hdr + data)
+
+    sr = 16000
+    t = np.arange(sr * 2, dtype=np.float32) / sr
+    pcm = (0.4 * np.sin(2 * np.pi * 330.0 * t)).astype(np.float32)
+    wav = tmp_path / "aud.wav"
+    _write_wav(wav, pcm)
+    frames = []
+    for i in range(20):
+        p = tmp_path / f"c{i:03d}.jpg"
+        assert cv2.imwrite(str(p), np.full((80, 80, 3), (i * 12) % 255, np.uint8))
+        frames.append(p)
+    monkeypatch.setattr(xmod, "extract_frames", lambda *a, **k: frames)
+
+    audio, visual = xmod._havic_preprocess(tmp_path / "clip.mp4", wav, tmp_path)
+    assert audio.shape == (1024, 128) and audio.dtype == np.float32
+    assert visual.shape == (3, 16, 224, 224) and visual.dtype == np.float32
+    assert np.all(np.isfinite(audio)) and np.all(np.isfinite(visual))
+    # reference dataset normalisation applied: values sit near O(1), not raw log scale
+    assert -50 < float(audio.mean()) < 50 and float(audio.std()) > 0.0

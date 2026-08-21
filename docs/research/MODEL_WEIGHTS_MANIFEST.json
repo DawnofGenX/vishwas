@@ -203,11 +203,14 @@
       "note": "HABLA_WavLM_AASIST (WavLM-Large + HtrgGAT) vendored 2026-08-21; 733/733 key match; see docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md"
     },
     "effort": {
-      "vendored": false,
-      "license": "CC-BY-NC-4.0"
+     "vendored": true,
+     "license": "CC-BY-NC-4.0",
+     "note": "Effort-AIGI-Detection (CLIP ViT-L/14 + OrthAlign) vendored 2026-08-21; 681/681 key match; chameleon primary"
     },
     "havic": {
-      "vendored": false
+     "vendored": true,
+     "license": "MIT",
+     "note": "JielunPeng/HAVIC HAVIC_FT vendored 2026-08-21 via _havic backend + timm shim; 456-key coverage; numpy kaldi-fbank port validated vs torchaudio <=5e-4; smoke load 8.6s infer 5.1s NOT SLOW; pt200 fallback is headless pretrain payload (cannot score, documented)"
     }
-  }
+    }
 }

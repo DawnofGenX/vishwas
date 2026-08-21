@@ -133,14 +133,53 @@ evidence record carries `"license": "CC-BY-NC-4.0"`.
 existing availability gate; heuristic fallback untouched and still active when
 the env var is unset or the arch is unavailable.
 
-## HAVIC — holistic AV coherence (cross_modal) — PENDING (Task 1.4)
+## HAVIC — holistic AV coherence (cross_modal) — VENDORED ✅
 
-Checkpoints on disk:
-- `havic/best_ft/best_ft_model.pth` 858,837,738 B (sha `7a0e3ddc…`) — primary
-- `havic/pt200/pt_model.200.pth` 972,770,538 B (sha `a8c44dd5…`) — secondary fallback
+**Checkpoint (primary):** `/opt/verisafe/models/havic/best_ft/best_ft_model.pth`
+**Provenance:** JielunPeng/HAVIC, arXiv:2603.23960 — **MIT licensed** (no opt-in
+gate needed). `best_ft` = HAVIC_FT finetune payload (456 tensors); `pt200`
+secondary entry in `CHECKPOINT_CHAIN` is a pretrain payload WITHOUT classifier
+heads — apply_state honestly returns False for it (documented limitation; not
+a working scoring fallback).
+**Arch class:** `src/verisafe/model_archs/havic.py` (`HavicArch`, implemented)
+over vendored backend package `model_archs/_havic/` (copy-adapted reference
+modules + minimal `_timm_shim.py`; timm absent from this tree). One upstream
+bug fixed in the vendored copy: forward passed `use_mask=False` to encoders
+whose signature says `use_hierarchical`.
+**Wiring:** `cross_modal._load_havic()` routes through
+`resolve("VERISAFE_HAVIC_WEIGHTS") -> adapter.load() -> is_usable_model()`;
+preprocessing = numpy kaldi-fbank port (validated vs real torchaudio: max abs
+diff ≤5e-4 across sine/speech/noise/short inputs) + 16-frame [0,1] tensor.
 
-No verification run yet — arch class still an honest stub. Expected SLOW tier
-(15-min CPU cap per roadmap). Filled in Task 1.4.
+### Fresh verify run (this file's date)
+
+Command:
+```
+VERISAFE_HAVIC_WEIGHTS=/opt/verisafe/models/havic/best_ft/best_ft_model.pth \
+PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
+  timeout 900 python3 /tmp/verisafe-t14-smoke/verify_havic.py <clip> <workdir>
+```
+
+| Check | Result |
+|-------|--------|
+| sha256 of on-disk weight | `7a0e3ddc6effd6813c81d915eb2ea57e7dc7d4711cb39798680ff477de2ca19d` |
+| matches manifest first-12 (`7a0e3ddc…`) | ✅ true |
+| `adapter.load()` through real seam | `ArchModelWrapper` in **8.6 s** |
+| `is_usable_model(model)` | **True** |
+| preprocess (production helpers) | 0.3 s → audio `(1024,128)` fbank + visual `(3,16,224,224)` |
+| inference wall-time (4 s clip, 16 frames) | **5.1 s** (cap 900 s → **NOT SLOW**) |
+| inconsistency posterior | 0.9986 (synthetic testsrc+sine fixture — value sanity only, not a verdict claim) |
+| max thermal zone during run | 48 °C (normal tier; no SLOW marking per Decision #3) |
+| overall | **PASS** |
+
+Preprocessing deviations (documented honestly): whole frames instead of face
+crops (no face cropper vendored); whole-clip audio mean-removal rather than
+per-window alignment; last-frame repeat when <16 frames extract; polarity
+(assumption H5) unverified — smoke value is sanity-only.
+
+**Status:** cross_modal now has a live learned consistency path behind the
+existing availability gate; heuristic AV probe untouched and still active when
+the env var is unset or the arch is unavailable.
 
 ---
 

@@ -545,6 +545,16 @@ ADAPTERS: dict[str, Adapter] = {
         family="video",
         preprocess=_video_frame_preprocess,
         extract_prob=_auto_extract,
+        # Phase 1 Task 1.4: route through the arch-aware seam so a provisioned
+        # checkpoint loads as a READY ArchModelWrapper whose .predict((audio,
+        # video)) -> inconsistency posterior in [0,1] (HavicArch.score).
+        # cross_modal supplies its own reference-faithful (audio, video)
+        # preprocessing tuple; this adapter's preprocess stays the generic
+        # frame-sequence helper for run_check() compatibility. Env unset /
+        # arch unavailable -> None + last_reason, and the cross-modal stage
+        # falls back to its heuristic AV probe unchanged.
+        _load=lambda p: _arch_aware_load(
+            p, "havic", env_name="VERISAFE_HAVIC_WEIGHTS"),
     ),
     "VERISAFE_IMAGE_FACE_WEIGHTS": Adapter(
         env_name="VERISAFE_IMAGE_FACE_WEIGHTS",
