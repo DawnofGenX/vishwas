@@ -65,6 +65,71 @@ Our `cross_modal.py` implements modality-localized correlation (lip-sync proxy, 
 
 **Direct implication for VeriSafe** (and why we never average raw scores): after WhatsApp's Opus+AAC re-encode, detector AUROC drops enough that a single-model threshold flips verdicts. Our answer is the OOF-stacked LR with calibration + selective prediction (abstain when signal conflict), plus the transform-matrix stress test in P7 that replays every detector through the same codec ladder and records per-score drift.
 
+### 4.1 Learned-stage adversarial sensitivity — small-N real-weights check (2026-08-21)
+
+Phase 5 Task A red-team re-run, now that all three learned families are live.
+**This is a small-N sanity check on ONE synthetic fixture (N=7 runs), not a
+benchmark** — it answers "do realistic channel transforms flip the learned
+score today", nothing more.
+
+**Method.** Base clip: 4 s `testsrc`+`sine`, 640×360 @ 8 fps, h264+AAC
+(same recipe as the P1 proof fixture; original purged by zero-retention).
+Six transform variants built with ffmpeg (`VERISAFE_FFMPEG_THREADS=1`),
+audio-affecting transforms keeping the video stream and video-affecting ones
+keeping the audio stream so all three families score on every variant:
+
+| Variant | Transform |
+|---|---|
+| v_aac32k | audio → AAC 32 kbps low-bitrate (video copied) |
+| v_mp3_64k | audio → MP3 64 kbps lossy (video copied) |
+| v_resample8k | audio resampled to 8 kHz (video copied) |
+| v_h264crf40 | video h264 re-encode CRF 40 (audio copied) |
+| v_scale50 | 50% luma/frame scale → 320×180 (audio copied) |
+| v_fps6 | frame drop 8 fps → 6 fps (audio copied) |
+
+Executed via **direct capability calls** (not 7 CLI runs): each model loaded
+once into the production seam (`model_adapters.resolve()` → arch wrapper),
+then per variant the exact capability code paths ran — AASIST 3-crop median
+(`_multi_crop` seam), EFFORT 8-frame median (`_effort` seam), HAVIC
+(`_havic_check`). Chosen to avoid reloading ~5 GB of checkpoints per variant;
+cross-validated: driver baseline scores match the same-day CLI E2E run
+exactly (0.997 / 0.378 / 0.993), confirming seam equivalence.
+
+**Results** (`prob_deepfake` / `prob_inconsistent`, baseline vs variants):
+
+| Clip | AASIST (audio) | EFFORT (video) | HAVIC (cross-modal) |
+|---|---|---|---|
+| clip_av (baseline) | 0.997 | 0.378 | 0.993 |
+| v_aac32k | 0.997 | 0.375 | 0.993 |
+| v_mp3_64k | 0.997 | 0.375 | 0.993 |
+| v_resample8k | 0.997 | 0.375 | 0.996 |
+| v_h264crf40 | 0.997 | 0.395 | 0.992 |
+| v_scale50 | 0.997 | 0.388 | 0.993 |
+| v_fps6 | 0.997 | 0.367 | 0.994 |
+| **max \|Δ\| vs baseline** | **0.000** | **0.017** | **0.003** |
+
+**Verdict per family** (stable = max score delta < 0.15, no flips):
+- **AASIST: STABLE** (Δ = 0.000 across all six transforms).
+- **EFFORT: STABLE** (spread 0.367–0.395; worst Δ 0.017 under CRF-40 re-encode).
+- **HAVIC: STABLE** (spread 0.992–0.996; worst Δ 0.003 under 8 kHz resample).
+
+No verdict flips anywhere in the matrix.
+
+**Honest caveats (read before citing this as robustness evidence):**
+1. **Ceiling saturation**: the fixture is a synthetic tone/testsrc pattern, and
+   both AASIST (0.997) and HAVIC (~0.99) sit at their score ceilings. A pinned
+   score cannot flip by construction, so "stable" here partly reflects
+   saturation, not measured margin. EFFORT (mid-range 0.37–0.40) is the only
+   family whose stability is genuinely informative.
+2. N=7 runs, one fixture, one transform severity per family — far below the
+   codec-ladder coverage of §4's cited benchmarks (UMCL, 2504.12423).
+3. Real deepfake fixtures (FaceForensics++/CelebV-class) must replace the
+   synthetic clip before any deployment claim; eval-only dataset use per §5.
+4. The heuristic `cross_modal_av` probe did shift class on this fixture
+   (weakly_synced, r=0.195) — heuristics remain the more fragile tier, which
+   is exactly why fusion never trusts a single family.
+
+
 ## 5. Labeled data & minimal eval design
 - Public datasets referenced by the papers above: FaceForensics++/CelebV-Flip/FoFo (video); ASVspoof 2015/2019/2021(+TTA)/5 (audio); GenVideo (million-scale, DeMamba). Sizes span 10GB–2TB — full training is out of scope for this box; we use them for **eval-only** downloads when a specific gated model lands.
 - Minimal selective-prediction calibration design (implemented in `fusion_train.py`): 5-fold OOF → per-capability logistic stacking on [value, gap-flag] features → temperature-scaling grid minimizing NLL → coverage/risk curve; demo dataset generator is seeded-reproducible synthetic (labeled as such in outputs).

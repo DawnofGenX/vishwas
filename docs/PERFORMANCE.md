@@ -82,4 +82,37 @@ Stages that still run after a trigger (light analysis families, currently `GovDo
 
 Notes: thermal held at 37 °C (acpitz) throughout the AASIST smoke — no SLOW-tier marking needed per Decision #3. The 3-crop T2 stage (`aasist_detector`) ran inside the default 300 s job budget with ~8% share. EFFORT verify ran at 55 °C peak (normal tier); label order confirmed [real, fake] on known-real photos (fake posterior 0.29–0.35). Evidence: `docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md`.
 
+## 7. End-to-end CLI re-measure — full current build (all learned stages live)
+
+Re-measured 2026-08-21 (Phase 5 Task A) with all three weight gates provisioned
+(AASIST + EFFORT + HAVIC real checkpoints), `VERISAFE_FFMPEG_THREADS=1`,
+sequential runs, via `scripts/run_verisafe.sh cli`. Fixture: fresh 4 s
+`testsrc`+`sine` clip (640×360 @ 8 fps, h264+AAC) — the earlier P1 fixture is
+purged by zero-retention design, so it was re-synthesized to the same recipe.
+
+| Run | Input | E2E wall (CLI) | `wall_s` | Stage timings (`stage_timings_s`) | Learned scores seen |
+|---|---|---|---|---|---|
+| (a) audio | `tests/fixtures/audio/smoke_5s.wav` | **23.9 s** | 22.97 | `DeepfakeAudioCapability` 22.97 | aasist 0.997 (3 crops); degradation battery ok |
+| (b) AV clip | 4 s testsrc+sine mp4 | **35.8 s** | 34.77 | `DeepfakeVideoCapability` 21.68, `CrossModalCapability` 13.08 | effort 0.378 (8 frames), havic 0.993 |
+| (c) text URL | `--text "https://example.com"` | **0.58 s** | 0.18 | — (light path only) | n/a |
+
+Full hermetic suite same day: **313 passed, 3 skipped in 18.84 s** pytest wall
+(19.7 s incl. interpreter start), thermal ≤50 °C throughout all runs.
+
+Reading of the numbers:
+- Audio E2E dropped vs the earlier-today 42.1 s P1 proof run (→ 23.9 s): that
+  run paid first-process cold page-in for the 3.79 GB WavLM checkpoint; the
+  stage itself (3-crop AASIST + offline features + degradation battery) is
+  unchanged at ~23 s. The §1 budget row (~15–23 s) stands.
+- Video side splits as expected: EFFORT dominates `DeepfakeVideoCapability`
+  (8 frames × ~1.7 s/frame ≈ 14 s of the 21.7 s stage), HAVIC ~5 s/clip inside
+  the 13.1 s cross-modal stage (rest is frame/wav extraction + heuristic probe).
+- **No stage exceeded its budget tier** against the default 300 s job deadline
+  (worst case 35.8 s ≈ 12% share) — no budget-bump proposal required. The §1
+  allocation table remains accurate as written.
+
+Adversarial sensitivity of these learned scores under codec/scale/framerate
+transforms is measured separately in
+`docs/research/DEEPFAKE_DETECTION.md` §4.1 (same date).
+
 - Undervolt config `thermald-undervolt.xml` is staged for `sudo` install if idle temps creep above ~53C.
