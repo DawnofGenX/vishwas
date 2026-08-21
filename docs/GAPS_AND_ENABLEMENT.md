@@ -32,6 +32,22 @@ Honest, current-state inventory. Every row states what runs *right now* on this 
 | `digilocker` / `setu` (gov live APIs) | ❌ no e-KYC consumer creds (discovery-only surface IS reachable — see `research/INDIA_GOV_VERIFICATION.md` §1–§2) | `VERISAFE_DIGILOCKER_URL`+`KEY` (partnership-gated OAuth), `VERISAFE_APISETU_BASE`+`TOKEN` (partners.apisetu.gov.in client-credentials) — the API Setu *directory* search works anonymous (single-use bearer per call); actual `/certificate/v3/…` e-KYC calls need the registered consumer identity | Live-authority verification of govt docs unavailable; format/tampering/template checks + user-assisted QR verify instructions still run |
 | Fusion checkpoints | ✅ trainer + collector live (2026-08-20) | `python3 -m verisafe.fusion_train --synthetic N --features F --target <name>` or `--dataset corpus.jsonl` (operator-labelled, `{features,label}` rows) → numpy mini-batch-SGD LR head → `$VERISAFE_FUSION_DIR/training/stack_<target>.json` (JSON, same contract as the OOF path); `FusionEngine.load_trained()` wires it; enable at serve time with `VERISAFE_FUSION_USE_TRAINED=1` (default OFF = byte-identical explicit-weight behaviour). Collector: `src/verisafe/dataset_collector.py` (synthesize/load_jsonl/save_jsonl/split/to_dataset_dict, typed DatasetError). test_16 hermetic (7 tests) | Explicit-weight fusion remains the default; provisioned checkpoints add calibrated LR stacking per target once enabled |
 | RAG template cache | ◑ seeded (v1, built 2026-08-20) — 10 derived templates, 65 issuer-trust entries (from `apisetu_catalog_digest_2026-08-19.json`), 6 QR schemes, 16 official-content baselines; digilocker+nic reachable, incometax/nsdl/epfo unreachable from this box | rebuild via `python3 scripts/build_rag_cache.py` (honors `VERISAFE_RAG_CACHE` + `VERISAFE_RAG_VERSION`) | Template-similarity signal now active for the 10 known doc classes; stale/absent entries degrade confidence silently, never block. Retrieval cache only, never source of truth. |
+| `i18n` (reply languages) | ✅ **7/7 languages render own strings** (merged 2026-08-21, roadmap Phase 3 under autonomy default) — en authoritative; ta/te/ml/kn/bn **DRAFT**; hi best-effort | native review still PENDING per language: drafts live in `docs/i18n/*.draft.md`; corrections land via the documented `load_custom_strings()` JSON overlay or a follow-up merge; test_08 pins the gate (`REVIEWED_LANGUAGES` stays empty until sign-offs) | no key falls back silently anymore — every supported language renders its own verdict text; unverified lines flagged below, never presented as localized |
+
+### Language review state (roadmap Phase 3 — merged 2026-08-21, native sign-off still pending)
+
+The five Indian-language drafts (ta, te, ml, kn, bn) were merged into `i18n._DEFAULTS` under the user's standing autonomy directive (gates take stated defaults; each default noted here). **Status is DRAFT, not reviewed:** any line carrying `[?]` in its draft file was sub-90% machine confidence and must be double-checked by a native reviewer before that language can be called localized. The full flagged inventory (32 keys total):
+
+| Lang | Flagged keys (see `docs/i18n/<lang>.draft.md` for line-level notes) |
+|---|---|
+| ta | confidence_line, evidence_missing, heavy_pending_notice, progress_media, verdict_caution, verdict_do_not_use |
+| te | confidence_line, evidence_missing, heavy_pending_notice, verdict_caution, verdict_do_not_use |
+| ml | confidence_line, evidence_missing, heavy_pending_notice, verdict_caution, verdict_do_not_use |
+| kn | evidence_missing, greeting, heavy_pending_notice, progress_media, verdict_caution, verdict_do_not_use, verdict_unable |
+| bn | confidence_line, evidence_missing, heavy_pending_notice, verdict_caution, verdict_do_not_use |
+| hi | all 14 keys (existing 12 are pre-roadmap best-effort machine output; the 2 new heavy_* keys drafted this cycle) |
+
+Review path for a native speaker: read one `docs/i18n/<lang>.draft.md`, correct/copy the lines, either write a small `i18n_extra.json` (auto-overlaid at import, zero code change) or request a module merge; when done, add the language to `REVIEWED_LANGUAGES` in `tests/test_08_i18n_report.py` (that arms the differ-from-English assertion) and re-run `scripts/i18n_export.py` to refresh `docs/i18n/en.md`.
 
 ## Current overall capability posture (this box)
 

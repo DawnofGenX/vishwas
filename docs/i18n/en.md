@@ -7,7 +7,7 @@
 > English is the authoritative base language. Every other language
 > draft in this directory must cover exactly this key set.
 >
-> Corpus size: **14 keys** (12 in module, 2 pre-drafted for Task 3.2).
+> Corpus size: **14 keys** (14 in module, 0 pre-drafted for Task 3.2).
 
 | Key | English text | Placeholders | Source |
 |---|---|---|---|
@@ -23,5 +23,5 @@
 | `progress_url` | Analysing the link… | — | in module |
 | `progress_media` | Studying the video/audio in detail. This takes a little longer… | — | in module |
 | `evidence_missing` | Some checks were skipped because a required service was unavailable; the verdict above reflects only what I could actually test. | — | in module |
-| `heavy_pending_notice` | The quick check is done. My deeper check is still running — I'll send you an update when it finishes. | — | pre-drafted (Task 3.2) |
-| `heavy_followup` | My deeper check (%(cap)s) finished. Result: %(verdict)s — confidence %(conf)s. | %(cap)s, %(conf)s, %(verdict)s | pre-drafted (Task 3.2) |
+| `heavy_pending_notice` | The quick check is done. My deeper check is still running — I'll send you an update when it finishes. | — | in module |
+| `heavy_followup` | My deeper check (%(cap)s) finished. Result: %(verdict)s — confidence %(conf)s. | %(cap)s, %(conf)s, %(verdict)s | in module |
