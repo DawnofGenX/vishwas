@@ -83,6 +83,35 @@ def detect_available_deps() -> set[str]:
                  "VERISAFE_IMAGE_FACE_WEIGHTS"):
         if env.get(wenv) and Path(env[wenv]).exists():
             deps.add("model-weights")
+            # Finding A fix (2026-08-21): weights present but torch broken
+            # (missing __init__ / _prims_common — e.g. the half-installed user
+            # site-packages tree) means every learned tier fast-fails while
+            # this dep claims ready. Probe that torch actually WORKS (import
+            # torch.nn, not just the namespace) before claiming readiness.
+            try:
+                import importlib.util as _ilu
+                if _ilu.find_spec("torch") is not None:
+                    try:
+                        import torch.nn  # noqa: F401 — real usability probe
+                    except Exception:
+                        log.warning(
+                            "model-weights env vars are set but torch is BROKEN "
+                            "(namespace imports, torch.nn fails — likely a stale "
+                            "~/.local site-packages). Learned tiers will fast-fail "
+                            "to 'unavailable'. Fix: remove/move the stale "
+                            "~/.local/.../torch dir or launch via "
+                            "scripts/run_verisafe.sh with docling-python first on "
+                            "PYTHONPATH.")
+                        deps.discard("model-weights")
+                else:
+                    log.warning(
+                        "model-weights env vars are set but torch is NOT importable — "
+                        "learned tiers will fast-fail to 'unavailable'. Launch via "
+                        "scripts/run_verisafe.sh (wires pylibs/docling-python paths) "
+                        "or fix PYTHONPATH.")
+                    deps.discard("model-weights")
+            except Exception:
+                pass
             break
     if env.get("VERISAFE_CAPE_CMD") or has_bin("firejail"):
         deps.add("dynamic-sandbox")
