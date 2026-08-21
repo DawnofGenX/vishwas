@@ -1,0 +1,19 @@
+# Keep the verisafe build context (repo root) minimal: only src/ and scripts/
+# are COPYed into the image; everything runtime-generated or host-side stays out.
+.git
+.gitignore
+.delegation
+.hermes
+.test-quarantine
+deploy
+docs
+tests
+fusion
+logs
+quarantine
+models
+output
+README.md
+**/__pycache__
+*.pyc
+*.egg-info

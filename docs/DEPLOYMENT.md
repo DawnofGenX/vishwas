@@ -7,55 +7,50 @@ Reference wiring for **OpenWA v0.21.0** as the sole WhatsApp transport. OpenWA i
 ```
 WhatsApp
    │
-OpenWA container ──(REST :2785 /api/sessions/{id}/...)──► verisafe webhook server (:8480)
+OpenWA container ──(REST /api/sessions/{id}/...)──────────► verisafe webhook server (:2785, in-container)
    │                                                            │
    └────────────◄── reply: POST /api/sessions/{id}/messages/send-text ◄──┘
 ```
 
-Both run on the same box here (laptop, zero-cloud constraint). Use `host` networking or a shared compose network so OpenWA can reach the webhook and vice-versa.
+Both run on the same box here (laptop, zero-cloud constraint). The committed
+compose file puts them on one compose network: OpenWA reaches VeriSafe's
+webhook at `http://verisafe:2785`, VeriSafe reaches OpenWA's REST at
+`http://openwa:2785`; only OpenWA's REST is published to the host (loopback).
 
-## docker-compose.yaml
+## Committed deployment artefacts (Roadmap T4.4)
 
-```yaml
-services:
-  openwa:
-    image: rmyndharis/openwa:v0.21.0          # pin the exact version you validated against
-    restart: unless-stopped
-    environment:
-      API_KEY: ${OPENWA_API_KEY}              # sets the Bearer key VeriSafe authenticates with
-      DATA_DIR: /data                          # SQLite + session state live here
-    volumes:
-      - ./openwa-data:/data
-    ports:
-      - "2785:2785"                            # REST API; keep bound to 127.0.0.1 if not LAN-exposed
-    # NOTE: no public ingress needed for the webhook direction below —
-    # OpenWA pushes webhook events OUT to verisafe; see registration step.
+| Artefact | Purpose |
+|---|---|
+| `deploy/docker-compose.yml` | Two-service stack: `openwa` (pinned `rmyndharis/openwa:v0.21.0`) + `verisafe` (built from `deploy/Dockerfile`). Secrets read from `deploy/.env`: `OPENWA_API_KEY` (required), `OPENWA_WEBHOOK_SECRET` (recommended), optional `VERISAFE_MODELS_HOST_DIR` to relocate the weights mount. |
+| `deploy/Dockerfile` | Thin runtime image: `python:3.12-slim` + `curl` (healthcheck) + `numpy==2.4.6` — the one hard third-party import on the boot path (`capabilities/__init__` eagerly imports `deepfake_video`). Heavy capability trees stay host-side by design; gated stages report `unavailable` in `/health` and degrade gracefully. |
+| `.dockerignore` | Keeps the build context to `src/` + `scripts/`. |
+| `deploy/webhook.example.json` | OpenWA webhook-registration body pointing at VeriSafe's route (see "Webhook registration"). |
+| `deploy/verisafe.service.example` | Bare-metal systemd unit (T2.3). |
 
-  verisafe:
-    build: .
-    # or: image: your-registry/verisafe:1.0
-    depends_on: [openwa]
-    environment:
-      OPENWA_BASE_URL: http://openwa:2785
-      OPENWA_SESSION_ID: main                  # session created after first QR pairing
-      OPENWA_API_KEY: ${OPENWA_API_KEY}        # MUST match openwa.API_KEY above
-      OPENWA_WEBHOOK_SECRET: ${OPENWA_WEBHOOK_SECRET}
-      VERISAFE_WEBHOOK_HOST: 0.0.0.0
-      VERISAFE_WEBHOOK_PORT: "8480"
-      VERISAFE_QUARANTINE: /var/lib/verisafe/quarantine
-      VERISAFE_AUDIT_LOG: /var/log/verisafe/audit.log
-      # capability gates — leave unset until provisioned; see GAPS_AND_ENABLEMENT.md
-      # VERISAFE_VT_API_KEY: ...
-      # VERISAFE_FFMPEG_THREADS: "2"           # thermal-safe default
-    volumes:
-      - ./quarantine:/var/lib/verisafe/quarantine
-      - ./models:/opt/verisafe/models          # weight files referenced by VERISAFE_*_WEIGHTS
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8480/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+Wiring summary (matches the code; older drafts of this doc said `/healthz`, `/openwa` and port 8480 — all stale):
+
+- VeriSafe routes: **`POST /webhook/inbound`** (events) and **`GET /health`** (rich JSON snapshot). Code default port is `8899` (`VERISAFE_WEBHOOK_PORT`); the compose service pins **2785** container-internally to match this host's ops convention.
+- OpenWA REST stays on its own container's 2785, reached as `http://openwa:2785` over the compose network; published to the host loopback-only (`127.0.0.1:2785`). VeriSafe's webhook port is deliberately NOT published — no ingress needed, OpenWA pushes events out.
+- Model weights are volume-mounted **read-only** at `/opt/verisafe/models`; the container entrypoint runs `scripts/provision_weight_env.sh --quiet` at start (absent gates skip safely), then execs `scripts/run_verisafe.sh webhook --port 2785`.
+- Quarantine and audit log bind-mount to `deploy/quarantine` and `deploy/logs`; OpenWA session state to `deploy/openwa-data`.
+
+### Bring up / down
+
+```bash
+cd deploy
+printf 'OPENWA_API_KEY=%s\nOPENWA_WEBHOOK_SECRET=%s\n' \
+    "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env && chmod 600 .env
+docker compose up -d --build        # verisafe flips to healthy once /health answers
+docker compose logs -f openwa       # QR appears here → WhatsApp → Linked Devices
+# ...then register the webhook once the session exists (next section)
+docker compose down                 # add -v only if you want to drop session state
 ```
+
+> **Operator review required before pairing:** nothing in these artefacts is
+> connected to any WhatsApp number. Scanning the QR links a real device — do
+> NOT connect a personal or production number without explicit operator
+> review; once paired, every inbound message on that session is analyzed and
+> answered by the pipeline.
 
 If running VeriSafe bare-metal instead of in a container (this laptop's actual mode), just export the env block above and run `python3 -m verisafe.app webhook`.
 
@@ -66,7 +61,7 @@ It prepends the isolated Python trees to `PYTHONPATH`, applies the thermal-safe
 `VERISAFE_FFMPEG_THREADS` default, and execs `python3 -m verisafe.app`:
 
 ```bash
-scripts/run_verisafe.sh webhook --port 8480 --openwa-url http://localhost:3000
+scripts/run_verisafe.sh webhook --port 8899 --openwa-url http://localhost:2785
 scripts/run_verisafe.sh cli --greet
 ```
 
@@ -112,41 +107,55 @@ Capability gates you still choose per deployment (all optional, all degrade grac
 
 Everything else is deterministic stdlib and runs as-is.
 
-### Dockerfile (minimal)
+### Container image
 
-```dockerfile
-FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-COPY pyproject.toml setup.py* ./            # adapt to your layout
-COPY src/ src/
-RUN pip install --no-cache-dir .
-# Optional heavy deps (omit to stay light):
-# RUN pip install --no-cache-dir opencv-python-headless pefile lief yara-x docling playwright
-# This host instead provisions them into an isolated target dir (PEP-668 box)
-# and points PYTHONPATH there — see the "Enablement (bare-metal)" section below.
-ENV PYTHONPATH=/src
-EXPOSE 8480
-ENTRYPOINT ["python3", "-m", "verisafe.app", "webhook"]
+Committed as `deploy/Dockerfile` (build context = repo root, trimmed by
+`.dockerignore`): `python:3.12-slim`, `curl` for the healthcheck, and a pinned
+`numpy==2.4.6`. The entrypoint/command are wired in `deploy/docker-compose.yml`
+(weight provisioning → `scripts/run_verisafe.sh launcher`), so the image stays
+runnable standalone too:
+
+```bash
+docker run --rm -p 2785:2785 verisafe \
+    bash scripts/run_verisafe.sh webhook --port 2785
 ```
+
+Heavy optional wheels (opencv, pefile, lief, yara-x, docling, playwright)
+intentionally stay OUT of the image — this host provisions them into isolated
+host-side trees (PEP-668 box) instead of baking multi-GB layers; inside the
+container the corresponding gates simply report unavailable and those stages
+degrade gracefully (see `GAPS_AND_ENABLEMENT.md`). Append them to the
+Dockerfile only if you accept the size and want an all-in-one image.
 
 ## First-run pairing & session setup
 
 1. Start OpenWA; its console prints a **QR code** — scan from WhatsApp → Linked Devices.
 2. Once paired, the default session id is `main` (visible under `/api/sessions`). If you create additional sessions, point `OPENWA_SESSION_ID` at the one VeriSafe should own.
-3. Verify REST works: `curl -H "X-API-Key: ***" http://<host>:2785/api/sessions/main/status`
+3. Verify REST works: `curl -H "X-API-Key: $OPENWA_API_KEY" http://127.0.0.1:2785/api/sessions/main/status`
    (OpenWA authenticates via the **X-API-Key** header, not `Authorization: Bearer` — see its openapi.json securitySchemes; VeriSafe's client sends X-API-Key in `channels.py::_req`.)
 
 ## Webhook registration (per session)
 
-VeriSafe registers itself against the session at boot:
+Registration is a MANUAL operator step (VeriSafe has no self-registration code
+path). The ready-made body is `deploy/webhook.example.json`; from the `deploy/`
+dir after `up`:
 
-```
-POST /api/sessions/main/webhooks
-{ "url": "http://<verisafe-host>:8480/openwa", "events": ["message.received"], "secret": "<hmac-secret>" }
+```bash
+curl -fsS -X POST \
+     -H "X-API-Key: $OPENWA_API_KEY" -H 'Content-Type: application/json' \
+     --data-binary @webhook.example.json \
+     http://127.0.0.1:2785/api/sessions/main/webhooks
 ```
 
-(Note: the field is `url`, not `target` — verified against the OpenWA v0.21.0 README, 2026-08-19. Optional top-level `"filters"` object enables smart pre-dispatch; `RATE_LIMIT_*` env vars on the OpenWA side bound outbound webhook+send throughput.)
+Its fields, mapped to VeriSafe's parse expectations:
+
+| `webhook.example.json` field | Value | Why |
+|---|---|---|
+| `url` | `http://verisafe:2785/webhook/inbound` | VeriSafe's only event route (service name resolves on the compose network; use a host IP/LAN name for non-compose setups). Field is `url`, not `target` — verified against the OpenWA v0.21.0 README, 2026-08-19. |
+| `events` | `["message.received"]` | The only event `parse_openwa_webhook()` acts on (both casings accepted); anything else is answered 200-no-op. |
+| `secret` | same value as `OPENWA_WEBHOOK_SECRET` in `deploy/.env` | OpenWA signs each delivery `X-OpenWA-Signature: sha256=<hex>` (HMAC-SHA256 over the RAW request bytes); `verify_openwa_signature()` in `channels.py` recomputes and constant-time-compares exactly that. Retries carry `X-OpenWA-Idempotency-Key` for dedupe. |
+
+(Optional top-level `"filters"` object enables smart pre-dispatch; `RATE_LIMIT_*` env vars on the OpenWA side bound outbound webhook+send throughput.)
 
 (Inbound side of VeriSafe verifies each delivery with header `X-OpenWA-Signature: sha256=<hex>` computed over the **raw** request bytes using `OPENWA_WEBHOOK_SECRET`, and dedupes retries on `X-OpenWA-Idempotency-Key`.)
 
@@ -156,14 +165,24 @@ If both sides are started with the same secret, deliveries validate; if `OPENWA_
 
 - Generate: `openssl rand -hex 32` for both `OPENWA_API_KEY` and `OPENWA_WEBHOOK_SECRET`; put them in a `.env` next to the compose file (`chmod 600`).
 - Never bake secrets into images; the compose file reads them from the environment.
-- Rotate by updating both containers' env and restarting in order (OpenWA first, then re-register the webhook from VeriSafe's boot path).
+- Rotate by updating both containers' env and restarting in order (OpenWA first, then re-run the webhook-registration curl above).
 
 ## Operations
 
-- **Health**: `GET :8480/healthz` (compose healthcheck). The audit log at `VERISAFE_AUDIT_LOG` records every job's verdict, confidence, wall time, and stage timings (P8 fields included).
+- **Health**: `GET /health` on the webhook port — rich JSON snapshot (status, uptime, job counters, open quarantines, available deps). The compose healthcheck curls it every 30s. From the host: `docker compose -f deploy/docker-compose.yml exec verisafe curl -fsS localhost:2785/health` (compose mode) or `curl -s localhost:2785/health` (bare-metal). The audit log at `VERISAFE_AUDIT_LOG` records every job's verdict, confidence, wall time, and stage timings (P8 fields included).
 - **Disk hygiene**: quarantine auto-purges per job; the stale sweep (default TTL in `VERISAFE_STALE_TTL_S`) catches crashed-job leftovers. Monitor the quarantine mount size regardless — this is where disk grows if a sweep fails.
 - **Thermal**: this deployment targets an i5-8250U-class CPU. Keep `VERISAFE_FFMPEG_THREADS ≤ 2`, avoid overlapping other heavy jobs; see `docs/PERFORMANCE.md` for the full budget model and the incident-response notes.
 - **Logs**: `VERISAFE_LOG_LEVEL=info` default; drop to `debug` only when diagnosing routing questions (it echoes the full route decision).
+
+## Validation status (honest, 2026-08-21)
+
+Validated **live** on this host (docker 29.7.1 + compose v5.4.0, via passwordless sudo):
+
+- `docker compose -f deploy/docker-compose.yml config -q` — clean.
+- `deploy/Dockerfile` builds; the built image boots through the compose entrypoint (`provision_weight_env.sh --quiet` → `run_verisafe.sh webhook --port 2785`).
+- In that container: `GET /health` returned the rich JSON snapshot and the compose healthcheck reached `healthy`; a correctly HMAC-signed `message.received` POST to `/webhook/inbound` returned **200** with a real pipeline reply; a tampered signature returned **401**.
+
+NOT yet exercised end-to-end (needs operator credentials/review by design): pulling and pairing the real `rmyndharis/openwa:v0.21.0` container, QR linking, and live WhatsApp traffic. The smoke run used `compose run --no-deps`, so the openwa service itself has never been started here.
 
 ## Rollback / failure modes
 
