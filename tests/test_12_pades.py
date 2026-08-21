@@ -11,6 +11,11 @@ Coverage:
   * tampered signature -> digest_ok=True,  rsa_ok=False
   * empty trust store  -> chain "incomplete" (designed partial-store outcome)
   * garbage CMS        -> graceful: error string, no exception escapes
+  * anchored-chain     -> runtime-generated CA in tmp dir; signer cert pinned
+                          in the store yields chain=="trusted" (and the
+                          designed partial-store neighbors stay "incomplete");
+                          capability-level end-to-end gives valid==True;
+                          committed production anchor smoke (README-pinned)
   * ToBeSigned retag   -> [0] implicit node retagged to SET (0x31), length +
                           content preserved byte-for-byte (RFC 5652 §9.1.2.1.2)
   * gate-OFF           -> capability emits indicator-only CheckResult, pipeline
@@ -18,6 +23,7 @@ Coverage:
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import importlib.util as _iu
 import time
@@ -74,6 +80,183 @@ def test_garbage_input_is_graceful():
         r = mod.verify_cms(blob, [])
         assert r["error"] is not None
         assert r["digest_ok"] is None and r["rsa_ok"] is None
+
+
+# ------------------------------------------- anchored-chain (runtime CA) ----
+# Semantics under test (pades_check._assess_chain): chain=="trusted" requires
+# the SIGNER certificate itself (subject + serial) to be present as a
+# trust-store anchor — the operator vouched for the exact signing identity.
+# A store holding only the issuing CA (or nothing) yields the designed
+# "incomplete" partial-store outcome, never an accusation. The CA here is
+# generated at RUNTIME in a temp dir: no committed private keys, fully
+# offline, deterministic serials/dates.
+
+def _mk_cert(subject, issuer_name, pub, sign_key, is_ca, serial, now):
+    from cryptography import x509 as _cx
+    from cryptography.hazmat.primitives import hashes as _h
+    return (_cx.CertificateBuilder()
+            .subject_name(subject).issuer_name(issuer_name)
+            .public_key(pub).serial_number(serial)
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=3650))
+            .add_extension(_cx.BasicConstraints(ca=is_ca, path_length=None),
+                           critical=True)
+            .sign(sign_key, _h.SHA256()))
+
+
+def _build_runtime_cms(ca_cert, signer_key, signer_cert) -> bytes:
+    """Minimal RFC 5652 SignedData (SHA-256/RSA) signed by *signer_key*.
+
+    Embeds BOTH the signer and issuing-CA certs so chain material is
+    complete and the outcome is purely a function of the trust store handed
+    to verify_cms. The RSA signature covers the signed-attrs SET (same retag
+    rule proven by test_seq_form_retags_context_tag_to_set_preserving_body).
+    """
+    import asn1crypto.cms as _cms
+    import asn1crypto.core as _core
+    import asn1crypto.x509 as _ax
+    from asn1crypto.algos import DigestAlgorithm as _DA
+    from cryptography.hazmat.primitives import hashes as _h
+    from cryptography.hazmat.primitives import serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import padding as _pad
+
+    payload = b"%PDF-1.4 anchored-chain runtime payload\n"
+    acert = _ax.Certificate.load(
+        signer_cert.public_bytes(_ser.Encoding.DER))
+    aca = _ax.Certificate.load(ca_cert.public_bytes(_ser.Encoding.DER))
+    attrs = _cms.CMSAttributes([
+        _cms.CMSAttribute({"type": "content_type",
+                           "values": [_cms.ContentType("data")]}),
+        _cms.CMSAttribute({"type": "message_digest",
+                           "values": [hashlib.sha256(payload).digest()]}),
+    ])
+    tbs = bytes([0x31]) + attrs.dump()[1:]     # wire form -> SET (RFC 5652)
+    sig = signer_key.sign(tbs, _pad.PKCS1v15(), _h.SHA256())
+    sd = _cms.SignedData({
+        "version": "v1",
+        "digest_algorithms": [_DA({"algorithm": "sha256"})],
+        "encap_content_info": {"content_type": "data",
+                               "content": _core.OctetString(payload)},
+        "certificates": [acert, aca],
+        "signer_infos": [_cms.SignerInfo({
+            "version": "v1",
+            "sid": _cms.SignerIdentifier({
+                "issuer_and_serial_number": _cms.IssuerAndSerialNumber({
+                    "issuer": acert.issuer,
+                    "serial_number": acert.serial_number,
+                }),
+            }),
+            "digest_algorithm": _DA({"algorithm": "sha256"}),
+            "signed_attrs": attrs,
+            "signature_algorithm": {"algorithm": "sha256_rsa"},
+            "signature": sig,
+        })],
+    })
+    return _cms.ContentInfo({"content_type": "signed_data",
+                             "content": sd}).dump()
+
+
+@pytest.fixture(scope="module")
+def runtime_chain(tmp_path_factory):
+    """(store_dir, ca_der, signer_der, cms_blob) from a runtime-generated CA."""
+    from cryptography import x509 as _x
+    from cryptography.hazmat.primitives import serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.x509.oid import NameOID as _NO
+
+    now = datetime.datetime(2026, 8, 21, 12, 0, 0,
+                            tzinfo=datetime.timezone.utc)   # fixed/deterministic
+
+    def _name(cn):
+        return _x.Name([
+            _x.NameAttribute(_NO.COUNTRY_NAME, "IN"),
+            _x.NameAttribute(_NO.ORGANIZATION_NAME, "VeriSafe Runtime Test CA"),
+            _x.NameAttribute(_NO.COMMON_NAME, cn),
+        ])
+
+    ca_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    signer_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = _name("VeriSafe Runtime Anchor Root")
+    ca_cert = _mk_cert(ca_name, ca_name, ca_key.public_key(), ca_key,
+                       True, 0x1001, now)
+    signer_cert = _mk_cert(_name("VeriSafe Runtime Signer"), ca_name,
+                           signer_key.public_key(), ca_key, False, 0x2001, now)
+    ca_der = ca_cert.public_bytes(_ser.Encoding.DER)
+    signer_der = signer_cert.public_bytes(_ser.Encoding.DER)
+    store_dir = tmp_path_factory.mktemp("truststore")
+    (store_dir / "ca.der").write_bytes(ca_der)
+    (store_dir / "signer.der").write_bytes(signer_der)
+    return store_dir, ca_der, signer_der, _build_runtime_cms(ca_cert, signer_key, signer_cert)
+
+
+def test_runtime_anchored_chain_yields_trusted(runtime_chain):
+    """Signer cert pinned in the store -> digest+RSA OK AND chain=='trusted'."""
+    mod = gd._get_pades()
+    store_dir, ca_der, signer_der, blob = runtime_chain
+    roots = mod.load_trust_store(store_dir)      # dir-scan load path
+    assert signer_der in roots
+    r = mod.verify_cms(blob, roots)
+    assert r["digest_ok"] is True
+    assert r["rsa_ok"] is True
+    assert r["chain"] == "trusted"
+
+
+def test_runtime_issuing_ca_anchor_alone_does_not_pin_signer(runtime_chain):
+    """Only the issuing CA in the store -> still 'incomplete' by design."""
+    _, ca_der, _, blob = runtime_chain
+    r = gd._get_pades().verify_cms(blob, [ca_der])
+    assert r["digest_ok"] is True and r["rsa_ok"] is True
+    assert r["chain"] == "incomplete"
+
+
+def test_runtime_chain_without_store_stays_incomplete(runtime_chain):
+    """No store at all -> chain material embedded but nothing vouched."""
+    _, _, _, blob = runtime_chain
+    r = gd._get_pades().verify_cms(blob, [])
+    assert r["chain"] == "incomplete"
+
+
+def test_capability_end_to_end_anchored_chain_valid_true(runtime_chain,
+                                                         tmp_path, monkeypatch):
+    """Production entry point: anchored chain -> status ok, valid==True."""
+    store_dir, _, _, blob = runtime_chain
+    monkeypatch.setattr(gd, "_DEFAULT_TRUSTSTORE", str(store_dir))
+    p = tmp_path / "doc.pdf"
+    p.write_bytes(b"%PDF-1.4\n/Type /Sig\n/Contents <"
+                  + blob.hex().upper().encode() + b">\n%%EOF\n")
+    art = Artifact(path=p, original_filename="doc.pdf",
+                   declared_type=InputType.FILE, verified_kind=MediaKind.PDF)
+    ctx = JobContext(job_id="t", artifact=art, quarantine_root=tmp_path,
+                     deadline_mono=time.monotonic() + 300,
+                     pades_available=True)
+    res = gd.GovDocumentCapability()._digital_signature(art, ctx)
+    cr = res[0]
+    assert cr.name == "digital_signature"
+    assert cr.status == "ok"
+    assert cr.signals["chain"] == "trusted"
+    assert cr.signals["valid"] is True
+    assert cr.signals["digest_ok"] is True and cr.signals["rsa_ok"] is True
+
+
+def test_committed_anchor_smoke():
+    """The seeded production store (assets/ca_truststore) loads and parses.
+
+    Provenance contract with the truststore README: the committed public
+    root must be present, be a CA, and carry the documented subject CN.
+    """
+    from cryptography import x509 as _x
+    from cryptography.x509.oid import NameOID as _NO
+
+    roots = gd._get_pades().load_trust_store(gd._DEFAULT_TRUSTSTORE)
+    assert len(roots) >= 1
+    subjects = []
+    for der in roots:
+        c = _x.load_der_x509_certificate(der)
+        bc = c.extensions.get_extension_for_class(_x.BasicConstraints).value
+        assert bc.ca is True
+        cn = c.subject.get_attributes_for_oid(_NO.COMMON_NAME)
+        subjects.append(cn[0].value if cn else None)
+    assert "ISRG Root X1" in subjects
 
 
 # ------------------------------------------------- ToBeSigned construction --
