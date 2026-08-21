@@ -260,3 +260,9 @@ def load_custom_strings(path: str | Path | None = None) -> None:
                 _DEFAULTS.setdefault(k, {}).update(langs)
         except Exception:
             pass
+
+
+# MT-audit overlay (2026-08-21): 32 Google-Translate-rendered strings that
+# back-translated closer to the English corpus than the LLM drafts.
+# Build-time QA only — the runtime product stays offline templates.
+load_custom_strings()
