@@ -27,6 +27,7 @@ Per-stage wall time is recorded into `JobOutcome.fusion_trace.stage_timings_s` a
 | Media probe (ffprobe) | 0.2–1s | <1% |
 | Transform battery (ffmpeg ×N variants) | 1–15s per variant set | up to ~15% |
 | Offline audio features (librosa-free numpy path) | 1–4s | ~1% |
+| AASIST learned audio (WavLM-Large, 3 crops) | **~15–23s** (measured 2026-08-21) | ~8% |
 | Deepfake video models (when weights available) | 60–240s | dominant remainder |
 | LLM interpretation (gated, optional) | 5–30s | ≤10% |
 
@@ -70,4 +71,13 @@ Stages that still run after a trigger (light analysis families, currently `GovDo
 - Symptom: machine suddenly powers off with no OS-level shutdown log → silicon thermal trip (~100C), not an OOM or driver crash.
 - First thing to check: `tail ~/.hermes/logs/thermal_power_monitor.log`.
 - Two concurrent Hermes sessions were the Aug-7 trigger; VeriSafe batches share that risk. Before any bulk job: run the precheck script, keep `VERISAFE_FFMPEG_THREADS=2`, avoid overlapping with other CPU-heavy Hermes work.
+
+## 6. Measured model timings (this box, CPU-only)
+
+| Model | Fixture | Load | Inference | Tier | Date |
+|---|---|---|---|---|---|
+| AASIST (HABLA_WavLM_AASIST: WavLM-Large 315M + HtrgGAT) | `tests/fixtures/audio/smoke_5s.wav` (5 s @16 kHz mono) | 15.7 s (3.79 GB checkpoint → RAM + arch build) | **15.3 s** single inference (1 crop); ~23 s for the full 3-crop T2 stage in E2E | normal (cap 120 s; not SLOW) | 2026-08-21 |
+
+Notes: thermal held at 37 °C (acpitz) throughout the smoke — no SLOW-tier marking needed per Decision #3. The 3-crop T2 stage (`aasist_detector`) ran inside the default 300 s job budget with ~8% share. Evidence: `docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md`.
+
 - Undervolt config `thermald-undervolt.xml` is staged for `sudo` install if idle temps creep above ~53C.

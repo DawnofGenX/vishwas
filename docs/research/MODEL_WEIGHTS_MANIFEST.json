@@ -199,7 +199,8 @@
   },
   "arch": {
     "aasist": {
-      "vendored": false
+      "vendored": true,
+      "note": "HABLA_WavLM_AASIST (WavLM-Large + HtrgGAT) vendored 2026-08-21; 733/733 key match; see docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md"
     },
     "effort": {
       "vendored": false,

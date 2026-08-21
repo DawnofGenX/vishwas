@@ -514,8 +514,17 @@ ADAPTERS: dict[str, Adapter] = {
     "VERISAFE_AASIST_WEIGHTS": Adapter(
         env_name="VERISAFE_AASIST_WEIGHTS",
         family="audio",
-        preprocess=_mel_aasist_preprocess,
+        # WavLM-AASIST wants a RAW 16 kHz waveform, not a mel matrix. The
+        # learned arch (model_archs.aasist) repeat-pads to the trained 4 s
+        # window inside score(); _waveform_preprocess just decodes to PCM.
+        preprocess=_waveform_preprocess,
         extract_prob=_auto_extract,
+        # Phase 1 Task 1.2: route through the arch-aware seam so a provisioned
+        # checkpoint loads as a READY ArchModelWrapper (.predict/.score ->
+        # calibrated spoof posterior). Env unset / arch unavailable -> None +
+        # last_reason, and T2 falls back to its heuristic features unchanged.
+        _load=lambda p: _arch_aware_load(
+            p, "aasist", env_name="VERISAFE_AASIST_WEIGHTS"),
     ),
     "VERISAFE_SSL_AUDIO_WEIGHTS": Adapter(
         env_name="VERISAFE_SSL_AUDIO_WEIGHTS",
