@@ -200,6 +200,8 @@ _ARCH_FAMILIES = {
     "VERISAFE_AASIST_WEIGHTS": "aasist",
     "VERISAFE_EFFORT_WEIGHTS": "effort",
     "VERISAFE_HAVIC_WEIGHTS": "havic",
+    # RawBMamba fills the 'fakemamba' family (see model_archs/fakemamba.py).
+    "VERISAFE_FAKEMAMBA_WEIGHTS": "fakemamba",
 }
 
 ARCH_UNAVAILABLE_REASON = "weight file loaded but architecture unavailable"
@@ -518,6 +520,12 @@ ADAPTERS: dict[str, Adapter] = {
         family="audio",
         preprocess=_waveform_preprocess,
         extract_prob=_auto_extract,
+        # 2026-08-23: family filled by RawBMamba (the one Mamba-family detector
+        # with obtainable weights) routed through the arch-aware seam; see
+        # model_archs/fakemamba.py. Env unset -> None + last_reason, heuristic
+        # fallbacks unchanged.
+        _load=lambda p: _arch_aware_load(
+            p, "fakemamba", env_name="VERISAFE_FAKEMAMBA_WEIGHTS"),
     ),
     "VERISAFE_AASIST_WEIGHTS": Adapter(
         env_name="VERISAFE_AASIST_WEIGHTS",

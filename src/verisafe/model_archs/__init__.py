@@ -16,6 +16,9 @@ _FAMILIES = {
     "aasist": "aasist",
     "effort": "effort",
     "havic": "havic",
+    # RawBMamba fills the pipeline's Mamba slot (deepfake_audio calls it
+    # 'fakemamba'); see model_archs/fakemamba.py provenance header.
+    "fakemamba": "fakemamba",
 }
 
 
