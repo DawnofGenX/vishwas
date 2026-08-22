@@ -1,0 +1,1 @@
+../../src/verisafe/assets/yara_rules/verisafe_starter.yar
