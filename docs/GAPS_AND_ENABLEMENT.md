@@ -69,7 +69,7 @@ Review path for a native speaker: read one `docs/i18n/<lang>.draft.md`, correct/
 | `deepfake_video` | Reduced (heuristics only) | **Good** | EFFORT learned tier vendored + live; adversarial small-N check: STABLE under 6 codec/scale/fps transforms |
 | `cross_modal` | Reduced (consistency heuristics) | **Good** | HAVIC learned tier vendored + live (MIT, NOT SLOW at ~5 s/clip); heuristic AV probe still runs alongside |
 | `gov_document` | Moderate | **Good** | GPG union-keyring signature verify live; CA trust-store seeded (ISRG Root X1) + anchored-chain PAdES test |
-| `malicious_file` | Moderate | **Moderate** (unchanged rating; +entropy/PE confirmed live E2E) | ClamAV present but guard-bug-gated (Finding B in ZERO_RETENTION_E2E doc); YARA needs a rules bundle (Finding C) — both documented, unfixed by design this cycle |
+| `malicious_file` | Moderate → **Good** (2026-08-22: Finding B fixed — clamscan runs live, EICAR→FOUND E2E; Finding C closed — Mandiant rules bundle live, `Eicar_Test_File` family fires; 5 usable checks fused) | remaining headroom: dynamic sandbox still needs Cape (`VERISAFE_CAPE_CMD`); LLM narration cred-gated |
 | `url_phishing` | Good | **Good** (unchanged) | VT reputation still cred-gated (T4.1 blocked-on-credentials) |
 | `image_facecheck` | Reduced | **Reduced** (unchanged) | weights simply don't exist publicly |
 
