@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ..events import Artifact, JobContext, MediaKind
-from .base import CheckResult
+from .base import CheckResult, Status
 
 # Allowlisted official domains — controlled access list (SSRF-safe by construction)
 OFFICIAL_DOMAINS = [
@@ -57,6 +57,56 @@ NUM_PATTERNS = {
     "upi_vpa": r"\b[\w.\-]{2,}@[a-z]{2,15}\b",
     "ifsc": r"\b([A-Z]{4}0[A-Z0-9]{6})\b",
 }
+
+# Image kinds eligible for offline QR extraction (photographed ID cards).
+_QR_IMAGE_KINDS = (MediaKind.PNG, MediaKind.JPEG, MediaKind.WEBP,
+                   MediaKind.GIF, MediaKind.TIFF, MediaKind.HEIC)
+
+# Short English facts per (qr kind, verify status); other combos fall back
+# to the verifier's own detail sentence.
+_QR_PAYLOAD_NOTES = {
+    ("aadhaar_secure", "ok"): "UIDAI digital signature VALID on card QR",
+    ("aadhaar_secure", "failed"): "QR present but signature invalid — possible forgery",
+    ("epic_b64", "ok"): "EPIC structure valid",
+    ("epic_b64", "failed"): "EPIC QR structure INVALID — possible forgery",
+    ("pan_text", "ok"): "PAN card QR text structurally valid",
+}
+
+
+def _qr_extra_trust_paths() -> list[str]:
+    """Optional extra X.509/public-key trust anchors (comma-separated paths).
+
+    Production verification relies solely on the bundled UIDAI certificates;
+    this env seam exists so hermetic tests can pin a fixture key (same idiom
+    as VERISAFE_GPG_TRUSTSTORE). Never points at the production cert dir.
+    """
+    raw = os.environ.get("VERISAFE_QR_EXTRA_TRUST_PATHS", "")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _qr_status_of(qr: Any) -> Status:
+    """Map QrVerifyResult.status into the CheckResult status vocabulary."""
+    if qr.status == "ok":
+        return "ok"
+    if qr.status == "failed":
+        return "failed"
+    return "degraded"        # degraded AND unavailable both degrade honestly
+
+
+def _qr_prob_forged(qr: Any) -> float | None:
+    """Evidence-strength mapping into the generic probability vocabulary.
+
+    A valid UIDAI RSA signature is strong authenticity evidence; a broken
+    one is strong forgery evidence. EPIC carries structural proof only,
+    hence the gentler pair. Emitted as signals['prob_forged'] — surfaced by
+    CheckResult.prob and consumed by trained LR stacks as a context feature;
+    the weighted fusion fallback keeps its own named-signal seam instead.
+    """
+    if qr.kind == "aadhaar_secure" and isinstance(qr.signals.get("signature_valid"), bool):
+        return 0.05 if qr.signals["signature_valid"] else 0.9
+    if qr.kind == "epic_b64" and isinstance(qr.signals.get("structure_ok"), bool):
+        return 0.2 if qr.signals["structure_ok"] else 0.7
+    return None
 
 
 def _extract_text(art: Artifact, ctx: JobContext) -> tuple[str, str]:
@@ -302,6 +352,7 @@ class GovDocumentCapability:
         # ---- authoritative verification, priority order -----------------
         out.extend(self._digital_signature(art, ctx))
         out.extend(self._qnative_checks(art, text, ctx, doc_type))
+        out.extend(self._qr_payload_checks(art))
         out.extend(self._digilocker(art, text, ctx))
         out.extend(self._api_setu(text, ctx))
         out.extend(self._official_web_check(ctx, doc_type, auth))
@@ -427,6 +478,63 @@ class GovDocumentCapability:
                                        ("failed" if valid is False else "degraded"),
                                        detail, note))
         return results
+
+    def _qr_payload_checks(self, art: Artifact) -> list[CheckResult]:
+        """Offline QR extraction + verification of photographed ID cards.
+
+        Emits one 'qr_payload_check' per decoded payload (work-capped at 4);
+        emits NOTHING when the image carries no QR so absence never degrades
+        unrelated checks. Never raises out of analyze(): every failure becomes
+        failed evidence. Signals are scrubbed defensively at this boundary —
+        any 12-digit run (a full Aadhaar UID) collapses the whole dict to
+        {"scrubbed": True}; only masked last-4 digits may travel.
+        """
+        kind = art.verified_kind or MediaKind.UNKNOWN
+        if kind not in _QR_IMAGE_KINDS:
+            return []
+
+        def _failed(exc: Exception) -> CheckResult:
+            return CheckResult("qr_payload_check", "mid", "failed",
+                               {"error_class": type(exc).__name__},
+                               "QR verification crashed; recorded as failed evidence")
+
+        try:                       # dep-gated like pades/docling — never fatal
+            from ..qr_verify import decode_image, verify_payload
+        except Exception as exc:  # noqa: BLE001
+            return [_failed(exc)]
+        try:
+            payloads = decode_image(str(art.path))
+        except Exception as exc:  # noqa: BLE001
+            return [_failed(exc)]
+
+        extras = _qr_extra_trust_paths()
+        out: list[CheckResult] = []
+        for payload in payloads[:4]:           # cap work per job
+            try:
+                qr = verify_payload(payload, extra_trust_paths=extras)
+            except Exception as exc:  # noqa: BLE001 — belt & braces on the contract
+                out.append(_failed(exc))
+                continue
+            signals: dict[str, Any] = {"qr_kind": qr.kind, **qr.signals}
+            pf = _qr_prob_forged(qr)
+            note = _QR_PAYLOAD_NOTES.get((qr.kind, qr.status))
+            if note is None:
+                head = (qr.detail or "").split(";")[0].strip()
+                note = f"QR ({qr.kind}) {qr.status}" + (f": {head[:80]}" if head else "")
+            try:
+                leaked = re.search(r"\d{12}", json.dumps(signals, default=str))
+            except Exception:  # noqa: BLE001 — unserializable signal = treat as leak
+                leaked = True
+            if leaked:
+                signals = {"scrubbed": True}
+                pf = None
+                note = ("UID-sized digit run blocked at the evidence boundary; "
+                        "signals dropped")
+            if pf is not None:
+                signals["prob_forged"] = pf
+            out.append(CheckResult("qr_payload_check", "mid",
+                                   _qr_status_of(qr), signals, note))
+        return out
 
     def _qnative_checks(self, art: Artifact, text: str, ctx: JobContext, doc_type: str | None) -> list[CheckResult]:
         """QR-native + structural native validations (offline, no network)."""
