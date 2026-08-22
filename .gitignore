@@ -8,3 +8,8 @@ output/renders/
 
 # test fixtures are versioned; delegation notes stay ignored
 !.delegation/fixtures/
+
+# local-only secrets & runtime env
+/deploy/.env
+/deploy/openwa-reply.env
+/deploy/verisafe-secrets.env
