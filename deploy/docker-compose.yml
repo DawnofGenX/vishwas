@@ -17,9 +17,10 @@ name: verisafe
 
 services:
   openwa:
-    # Pinned to the roadmap-validated version. Lowercase registry reference
-    # (Docker requires lowercase); same image as rmyndharis/OpenWA:v0.21.0.
-    image: rmyndharis/openwa:v0.21.0
+    # Pinned to the roadmap-validated version. NOTE: Docker Hub tags are
+    # UNPREFIXED (0.21.0, not v0.21.0 — the "v" form only exists on GitHub
+    # and fails to pull; fixed 2026-08-22).
+    image: rmyndharis/openwa:0.21.0
     restart: unless-stopped
     environment:
       # REST auth — VeriSafe's client sends it as X-API-Key (channels.py::_req).
