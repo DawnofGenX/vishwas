@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from .device import resolve_device
 from .model_archs import get_arch
 from .model_archs.base import ArchNotImplementedError, ArchSpec
 
@@ -179,12 +180,12 @@ class Adapter:
 # ---------------------------------------------------------------------------
 
 def _default_load(path: str) -> Any:
-    """torch.load with map_location='cpu'; returns None on any failure."""
+    """torch.load with map_location=resolve_device(); returns None on any failure."""
     if not path or not os.path.exists(path):
         return None
     try:
         import torch  # type: ignore
-        return torch.load(path, map_location="cpu", weights_only=False)
+        return torch.load(path, map_location=resolve_device(), weights_only=False)
     except ImportError:
         return None
     except Exception:

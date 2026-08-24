@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from ..device import resolve_device
 from ..events import Artifact, JobContext, MediaKind, Verdict
 from ..llm_guard import LLMClient, build_interpretation_prompt, interpret_with_fallback
 from ..media_utils import probe, extract_frames, apply_video_transform_matrix
@@ -40,7 +41,7 @@ def _load_model(cls_name: str, weights_env: str):
         # unregistered env var -> legacy behaviour (plain torch.load + .predict)
         try:
             import torch  # type: ignore
-            obj = torch.load(p, map_location="cpu", weights_only=False)
+            obj = torch.load(p, map_location=resolve_device(), weights_only=False)
             return obj if _is_usable_model(obj) else None
         except Exception:
             return None

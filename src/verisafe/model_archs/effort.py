@@ -73,6 +73,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import ArchSpec
+from ..device import resolve_device
 
 # ImageNet normalisation (E3).
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -190,6 +191,7 @@ class EffortSpec(ArchSpec):
 
     def build(self) -> _EffortNet:
         net = _EffortNet()
+        net.to(resolve_device())  # no-op on CPU-only hosts
         net.eval()
         return net
 
@@ -212,6 +214,11 @@ class EffortSpec(ArchSpec):
         # ImageNet normalise (E3).
         arr = (arr - _IMAGENET_MEAN[None, :, None, None]) / _IMAGENET_STD[None, :, None, None]
         xt = torch.from_numpy(np.ascontiguousarray(arr))
+        try:
+            dev = next(model.parameters()).device
+            xt = xt.to(dev)   # follow wherever build() placed the model
+        except StopIteration:
+            pass              # parameterless stub: nothing to align
         with torch.no_grad():
             logits = model(xt)
         probs = F.softmax(logits, dim=-1)

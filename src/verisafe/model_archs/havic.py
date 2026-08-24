@@ -74,6 +74,7 @@ from __future__ import annotations
 from typing import Any, Dict, Tuple
 
 from .base import ArchNotImplementedError, ArchSpec
+from ..device import resolve_device
 
 #: Checkpoint fallback chain (best_ft primary, pt200 secondary).
 #: See module docstring: pt200 lacks the heads, so it cannot satisfy the
@@ -108,6 +109,7 @@ class HavicArch(ArchSpec):
                 f"({type(exc).__name__}: {exc})"
             ) from exc
         model = HAVIC_FT()
+        model.to(resolve_device())  # no-op on CPU-only hosts
         model.eval()
         return model
 
@@ -177,6 +179,12 @@ class HavicArch(ArchSpec):
         was_training = model.training
         model.eval()
         try:
+            try:
+                dev = next(model.parameters()).device
+                a_t = a_t.to(dev)
+                v_t = v_t.to(dev)   # follow wherever build() placed the model
+            except StopIteration:
+                pass                # parameterless stub: nothing to align
             with torch.no_grad():
                 logits = model(a_t, v_t, is_training=False)
         finally:

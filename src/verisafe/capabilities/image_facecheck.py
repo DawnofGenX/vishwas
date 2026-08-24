@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from ..device import resolve_device
 from ..events import Artifact, JobContext, MediaKind
 from ..model_adapters import resolve as _resolve_adapter, _call_model as _call_model_compat, _auto_extract, is_usable_model as _is_usable_model
 from .base import CheckResult
@@ -135,7 +136,7 @@ def _load_model():
         return obj if _is_usable_model(obj) else None
     try:
         import torch  # type: ignore
-        obj = torch.load(p, map_location="cpu", weights_only=False)
+        obj = torch.load(p, map_location=resolve_device(), weights_only=False)
         return obj if _is_usable_model(obj) else None
     except Exception:
         return None

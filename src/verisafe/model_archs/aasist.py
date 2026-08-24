@@ -59,6 +59,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import ArchSpec
+from ..device import resolve_device
 from ._aasist_backend import AASIST as _AASISTBackend
 from ._wavlm.wavlm import WavLM, WavLMConfig
 
@@ -148,6 +149,7 @@ class AASISTSpec(ArchSpec):
 
     def build(self) -> _AASISTNet:
         net = _AASISTNet()
+        net.to(resolve_device())  # no-op on CPU-only hosts
         net.eval()
         return net
 
@@ -168,6 +170,11 @@ class AASISTSpec(ArchSpec):
         else:
             wav = wav[:_INPUT_SAMPLES]
         wav = wav.unsqueeze(0)  # (1, 64000)
+        try:
+            dev = next(model.parameters()).device
+            wav = wav.to(dev)   # follow wherever build() placed the model
+        except StopIteration:
+            pass                # parameterless stub: nothing to align
         with torch.no_grad():
             logits = model(wav)
         probs = F.softmax(logits, dim=-1)
