@@ -234,11 +234,13 @@ def health_snapshot(processor, deps) -> dict:
     snap = processor.counters.snapshot() if processor is not None \
         else {"jobs_total": 0, "jobs_ok": 0, "jobs_failed": 0}
     dep_list = sorted(deps) if deps else []
+    from verisafe.device import resolve_device  # lazy: torch import cost
     return {
         "status": "ok",
         "uptime_s": max(0, int(time.monotonic() - _PROCESS_START_MONO)),
         **snap,
         "quarantines_open": count_open_quarantines(),
+        "device": resolve_device(),
         "deps": {"available": dep_list, "count": len(dep_list)},
         # backward compat: pre-2.3 /health returned this exact flat list
         "deps_available": dep_list,
