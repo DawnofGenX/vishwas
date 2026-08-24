@@ -21,6 +21,7 @@ GATES=(
   "VERISAFE_AASIST_WEIGHTS|aasist/best_model.pth|"
   "VERISAFE_EFFORT_WEIGHTS|effort/chameleon/effort_chameleon.pth|effort/ffpp/effort_ffpp.pth effort/genimage/effort_genimage.pth"
   "VERISAFE_HAVIC_WEIGHTS|havic/best_ft/best_ft_model.pth|havic/pt200/pt_model.200.pth"
+  "VERISAFE_XLSRMAMBA_WEIGHTS|xlsr-mamba/model.safetensors|"
   "VERISAFE_DEMAMBA_WEIGHTS||"
   "VERISAFE_FAKEMAMBA_WEIGHTS||"
   "VERISAFE_SSL_AUDIO_WEIGHTS||"

@@ -48,7 +48,7 @@ verify_sizes() {
     log "verify_sizes $gate/$fname: absent (pending download)"
     return 0
   fi
-  exp_bytes="$(python3 -c "import sys; print(int(round(float(sys.argv[1]) * 1024 * 1024 / 10)) )" "$exp_mb")"
+  exp_bytes="$(python3 -c "import sys; print(int(round(float(sys.argv[1]) * 1000 * 1000)) )" "$exp_mb")"
   # Accept within 1% of expected (publishers round MB display values).
   act_bytes="$(wc -c < "$dst")"
   delta=$(( act_bytes > exp_bytes ? act_bytes - exp_bytes : exp_bytes - act_bytes ))

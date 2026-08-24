@@ -116,3 +116,33 @@ transforms is measured separately in
 `docs/research/DEEPFAKE_DETECTION.md` §4.1 (same date).
 
 - Undervolt config `thermald-undervolt.xml` is staged for `sudo` install if idle temps creep above ~53C.
+
+## 8. Measured model timings — RTX 5090 Laptop, CUDA (2026-08-24)
+
+Hardware/runtime change: migration to the new disk brought a GeForce RTX 5090
+Laptop GPU (24 GB, sm_120). Commit `5c80af7` added a device-resolution seam
+(`src/verisafe/device.py`: `VERISAFE_DEVICE` env > cuda-if-available > cpu);
+all learned-stage loads and inference now run on CUDA by default. Weights were
+re-downloaded fresh (AASIST 3.79 GB, HAVIC 859 MB); the fetcher's size-verify
+unit bug (MiB vs decimal MB) was fixed in `scripts/fetch_model_weights.sh`.
+
+| Measurement | CPU era (§6–7) | RTX 5090 (this table) |
+|---|---|---|
+| AASIST model load (3.79 GB ckpt) | ~16 s | **7.2 s** |
+| AASIST single score (2 s noise probe) | ~1.7 s/frame-class | **2.82 s total incl. first-CUDA-init** |
+| Full DeepfakeAudioCapability E2E (smoke_5s.wav) | ~23.9 s | **6.51 s** (incl. model load + 6-variant degradation battery) |
+| Text URL light path | <1 s | <1 s (unchanged) |
+
+Notes:
+- Interpreter decision: docling-python's torch 2.13.0+cu130 initializes CUDA
+  correctly on sm_120 (verified: device name + capability + matmul), so
+  `run_verisafe.sh` PYTHONPATH is unchanged; no vllm-env switch needed.
+- The webhook systemd unit previously had NO weight-gate env at all (gates
+  lived in ~/.bashrc, invisible to systemd — same failure class as the VT key).
+  Fixed durably: provision output inlined into `deploy/verisafe-secrets.env`.
+- New gate registered: `VERISAFE_XLSRMAMBA_WEIGHTS` (MIT, XLSR-Mamba-LA,
+  replaces RawBMamba as Mamba-slot primary once its arch module is vendored —
+  separate commit cycle). RawBMamba demoted to eval-grade ONNX fallback.
+- EFFORT checkpoint pending (Google Drive quota window on the only public
+  host); env line staged, gate will light up when uncommented.
+- Suite same day: **339 passed, 3 skipped** (baseline 333+3 +6 device-seam tests).
