@@ -130,8 +130,19 @@ unit bug (MiB vs decimal MB) was fixed in `scripts/fetch_model_weights.sh`.
 |---|---|---|
 | AASIST model load (3.79 GB ckpt) | ~16 s | **7.2 s** |
 | AASIST single score (2 s noise probe) | ~1.7 s/frame-class | **2.82 s total incl. first-CUDA-init** |
-| Full DeepfakeAudioCapability E2E (smoke_5s.wav) | ~23.9 s | **6.51 s** (incl. model load + 6-variant degradation battery) |
+| Full DeepfakeAudioCapability E2E (smoke_5s.wav) | ~23.9 s | **6.51 s** (incl. model load + 6-variant degradation battery); re-run 2026-08-25: 9.6 s stage wall incl. offline-features check |
+| EFFORT model load (1.21 GB ckpt, ViT-L/14 303M) | — | **1.6 s**; 5-crop batch score **0.29 s** (probe /tmp/probe_effort.py recipe, 2026-08-24) |
+| XLSR-Mamba load (1.28 GB safetensors, strict 565/565) | — | **2.7 s**; 4 s waveform score **0.65 s cuda / 1.24 s cpu-first-call** (`scripts/verify_xlsrmamba.py`, commit fa07bcc) |
 | Text URL light path | <1 s | <1 s (unchanged) |
+
+Gate posture after this table's date: ALL FOUR learned gates live on CUDA —
+AASIST (audio), EFFORT chameleon (video/face, fetched 2026-08-24 via Drive API
+`files.copy` bypass of the public download-quota wall), HAVIC (av-crossmodal),
+XLSR-Mamba-LA (audio 2nd opinion, MIT, replaces RawBMamba as Mamba-slot
+primary; label-order inversion bonafide=1 documented in its spec header X5).
+RawBMamba demoted to eval-grade ONNX fallback (no license). Webhook defaults to
+`VERISAFE_DEVICE=cpu` (risk-6: LLM serving shares the 5090); GPU is opt-in per
+invocation and `/health` reports the resolved `device`.
 
 Notes:
 - Interpreter decision: docling-python's torch 2.13.0+cu130 initializes CUDA

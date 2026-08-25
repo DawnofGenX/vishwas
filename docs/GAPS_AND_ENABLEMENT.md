@@ -89,6 +89,18 @@ weights, LLM narration, HF-token SSL-audio, no-public-checkpoint
 demamba/fakemamba. Honest gaps found during P5 and recorded (not patched):
 ClamAV guard bug, YARA rules-bundle absence, gov-doc CLI routing gap.
 
+**GPU-era delta (2026-08-24/25):** box now runs an RTX 5090 Laptop; device
+seam (`VERISAFE_DEVICE`, default cuda-if-available; webhook pinned to cpu so
+local LLM serving keeps its VRAM — risk-6 decision). EFFORT chameleon fetched
+after a public-GDrive quota wall via authenticated Drive API `files.copy`
+into own storage (siblings ffpp/genimage parked in own Drive as backups);
+gate LIVE. XLSR-Mamba-LA vendored (MIT, strict 565/565, commit fa07bcc) as
+the Mamba-slot PRIMARY, replacing license-less RawBMamba (kept as eval-grade
+ONNX fallback); label-order inversion (bonafide=1) documented + regression-
+tested. All FOUR learned gates live: AASIST / EFFORT / HAVIC / XLSR-Mamba.
+Remaining honest gaps unchanged: gov-doc CLI routing, missing-evidence reply
+wording, VT Finding-E url-id flakiness.
+
 ## Enabling priority (recommended order for this hardware)
 
 0. **Expose the isolated docling install** — `export PYTHONPATH=/home/hermes/docling-python` at service start. Already fully downloaded + model-cached in-dir (zero-cloud); instantly puts gov-document extraction on the structured-layout tier through the existing `docling` gate.
