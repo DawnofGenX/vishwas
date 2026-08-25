@@ -305,7 +305,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 fp.write_bytes(blob)
                 md["media_path"] = str(fp)
             elif msg.fetch_media and client is not None:
-                chat_id = payload.get("data", {}).get("to") or jid
+                # Media lives in the SENDER's chat row — data.to is OUR number
+                # (the message was sent TO us), which never matches the archive
+                # key. Prefer data.from; fall back to the session jid.
+                chat_id = payload.get("data", {}).get("from") or jid
                 got = client.extract_media(str(chat_id), str(payload.get("data", {}).get("id") or msg.id), workdir)
                 if got:
                     md["media_path"] = str(got)
