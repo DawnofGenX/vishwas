@@ -376,14 +376,58 @@ class MessageProcessor:
         return False
 
     def _persist(self, outcome) -> None:
-        """Append full outcome evidence (NOT user media — those are purged)."""
+        """Append a REDUCED outcome record (privacy: retention policy 2026-08-25).
+
+        Zero-retention posture: we keep only what ops-troubleshooting needs —
+        timestamps, verdict, per-check (name, status) and small scalar signals.
+        Dropped: sender JID (hashed), full reply text, page titles / redirect
+        chains / clam signature strings / any list-valued signal. Records past
+        VISHWAS_OUTCOMES_TTL_S (default 7 d) are pruned opportunistically here.
+        """
         if not self.persist_outcomes:
             return
         if self.outcome_log is None:
             self.workdir.mkdir(parents=True, exist_ok=True)
         self.outcome_log = self.workdir / "outcomes.jsonl"
+        self._prune_outcomes()
+        import hashlib
+        full = outcome.to_dict()
+        jid = getattr(outcome, "jid", "") or ""
+        jid_hash = hashlib.sha256(jid.encode()).hexdigest()[:12] if jid else ""
+        reduced_checks = []
+        for c in full.get("checks", []):
+            sig_small = {k: v for k, v in (c.get("signals") or {}).items()
+                         if isinstance(v, (int, float, bool))}
+            reduced_checks.append({"name": c.get("name"), "status": c.get("status"),
+                                   "signals": sig_small})
+        rec = {"ts": time.time(), "jid_h": jid_hash,
+               "target": full.get("target"), "verdict": full.get("verdict"),
+               "confidence": full.get("confidence"), "checks": reduced_checks}
         with self.outcome_log.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": time.time(), **outcome.to_dict()}, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def _prune_outcomes(self) -> None:
+        """Drop outcome records older than the TTL (default 7 days)."""
+        try:
+            ttl = int(os.environ.get("VISHWAS_OUTCOMES_TTL_S", 7 * 86400))
+            if not self.outcome_log.exists() or ttl <= 0:
+                return
+            cutoff = time.time() - ttl
+            kept, changed = [], False
+            for line in self.outcome_log.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                    if float(rec.get("ts", 0)) >= cutoff:
+                        kept.append(line)
+                    else:
+                        changed = True
+                except Exception:
+                    kept.append(line)
+            if changed:
+                self.outcome_log.write_text("\n".join(kept) + ("\n" if kept else ""),
+                                            encoding="utf-8")
+        except Exception:  # noqa: BLE001 — pruning must never break persistence
+            log.exception("outcomes prune failed; continuing")
 
 
 class CLISimulator:
