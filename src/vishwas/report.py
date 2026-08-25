@@ -40,8 +40,17 @@ class ReportBuilder:
               use_debug: bool = False) -> "UserReport":
         key = self.VERDICT_KEY[verdict]
         # spec: EVERY reply states result + confidence band + practical advice
-        conf_disp = f"{int(round(confidence * 100))}%" if use_debug else _band(confidence)
-        parts = [t(key, lang), t("confidence_line", lang, conf=conf_disp)]
+        # UX fix (2026-08-25): UNABLE replies carry NO confidence line — a
+        # confidence number on unverified content overclaims certainty exactly
+        # when we have the least evidence (the assured-on-empty-evidence class).
+        parts = [t(key, lang)]
+        n_ran = sum(1 for c in checks if c.status in ("ok", "degraded"))
+        if verdict is not Verdict.UNABLE_TO_VERIFY:
+            band = _band(confidence)
+            parts.append(t("confidence_line", lang, conf=band))
+        elif n_ran:
+            # coverage-aware unable: say what DID run so silence ≠ nothing-checked
+            parts.append(t("unable_coverage", lang, n=str(n_ran)))
 
         # targeted practical tips by domain
         tip = self._tip_for(target, verdict, lang)

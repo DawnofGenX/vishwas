@@ -111,6 +111,12 @@ _DEFAULTS: dict[str, dict[str, str]] = {
         # draft (bn); see docs/i18n/bn.draft.md
         "bn": "আমি এখন এটা সম্পূর্ণভাবে যাচাই করতে পারিনি। যেকোনো কাজের আগে, সরকারি ওয়েবসাইটে বা আ্য্পে সরাসরি যাচাই করুন।",
     },
+    "unable_coverage": {
+        # Coverage-aware unable (2026-08-25): state what DID run so the user can
+        # distinguish 'checked N angles, still inconclusive' from 'nothing checked'.
+        "en": "For reference, I was able to run %(n)s check(s) — they just didn't add up to a clear answer.",
+        "hi": "संदर्भ हेतु: मैं %(n)s जाँच चला सका — पर उनसे कोई स्पष्ट निष्कर्ष नहीं मिला।",
+    },
     "confidence_line": {
         "en": "My confidence: %(conf)s. This tool helps, but a human double-check is always safer.",
         "hi": "मेरी विश्वसनीयता: %(conf)s। यह टूल मदद करता है, लेकिन इंसानी डबल-चेक हमेशा बेहतर है।",
