@@ -36,7 +36,11 @@ for row in "${GATES[@]}"; do
   if [ -n "$primary" ] && [ -f "$MODELS_DIR/$primary" ]; then
     size=$(stat -c%s "$MODELS_DIR/$primary" 2>/dev/null || echo '?')
     mb=$(awk -v b="$size" 'BEGIN{printf "%.1f", b/1048576}')
-    printf 'export %s=%s\n' "$envvar" "$MODELS_DIR/$primary"
+    # PLAIN KEY=VAL: systemd EnvironmentFile silently DROPS `export KEY=VAL`
+    # lines (2026-08-24 incident: AASIST/HAVIC gates dark in the webhook while
+    # /health stayed green). Shell users: eval with set -a, or source after
+    # `set -a`. Never paste these lines into an EnvironmentFile with export.
+    printf '%s=%s\n' "$envvar" "$MODELS_DIR/$primary"
     table "$(printf '%-30s %-45s %11s MB  ok' "$envvar" "$primary" "$mb")"
   else
     # try alternates in order
@@ -47,7 +51,7 @@ for row in "${GATES[@]}"; do
     if [ -n "$found" ]; then
       size=$(stat -c%s "$MODELS_DIR/$found" 2>/dev/null || echo '?')
       mb=$(awk -v b="$size" 'BEGIN{printf "%.1f", b/1048576}')
-      printf 'export %s=%s\n' "$envvar" "$MODELS_DIR/$found"
+      printf '%s=%s\n' "$envvar" "$MODELS_DIR/$found"
       table "$(printf '%-30s %-45s %11s MB  ok(alt)' "$envvar" "$found" "$mb")"
     else
       table "$(printf '%-30s %-45s %12s  absent' "$envvar" "${primary:-<none-public>}" "-")"
