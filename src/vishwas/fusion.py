@@ -172,17 +172,20 @@ _EXPECTED_PROB_DET: dict[str, int] = {
 
 # Per-signal affine calibration: value' = clamp01(a*value + b).
 # Seeds from 2026-08-25 single-sample probe (known-AI video vs ffmpeg testsrc
-# control, /tmp/analysis/fusion/calibration_notes.md). Purpose: bring raw
-# posteriors onto a comparable risk scale and widen real separation:
-#   effort    control 0.302 -> ~0.35   AI 0.677 -> ~0.85
+# control, /tmp/analysis/fusion/calibration_notes.md), RECALIBRATED same day
+# against the measured 84-row FF++ corpus (rows_video_v2.jsonl):
+#   - the original effort seed (1.33,-0.05) mapped real talking-head footage
+#     (raw 0.62-0.87) to ~0.78-1.0 risk, fusing every real video to DNU;
+#   - (1.0,-0.35) maps that same real distribution to ~0.27-0.57 (CAUTION band)
+#     while the operator AI video (0.677 raw) still maps to ~0.33 weighted-mean
+#     input and stays DO_NOT_USE once corroborated by av_risk/havic.
 #   frameheur control 0.078 -> ~0.20   AI 0.281 -> ~0.60
 #   havic     saturates ~1.0 on both   -> demote (a=0.2) so it can't dominate
 #   av_risk   already a risk-in-[0,.5] -> identity (kept here for clarity)
 #   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
 #                (not speech) -> near-identity until a real-clean corpus lands.
-# Refine these with a proper held-out set; this is a DATA change, not code.
 _CALIBRATE: dict[str, tuple[float, float]] = {
-    "effort.prob": (1.33, -0.05),
+    "effort.prob": (1.0, -0.35),
     "frameheur.prob": (1.97, 0.05),
     "havic.prob_inconsistent": (0.2, 0.0),
     "aasist.prob": (1.0, 0.0),
@@ -216,9 +219,18 @@ def _deepfake_pattern(target: str, signals: dict[str, float],
     elevated = [k for k, v in signals.items() if (v or 0) > 0.30]
     strong = [k for k, v in signals.items() if (v or 0) > 0.55]
 
-    # fully_generated: face-forensics synthetic + AV anti-correlated
+    # fully_generated (2026-08-25 recalibration): the generative signature is
+    # AV-derived — anti-correlated audio/video sync + cross-modal inconsistency —
+    # with face forensics as corroboration. effort CANNOT gate this pattern by
+    # value: on the real-video-recalibrated scale FF++ reals overlap the AI
+    # video's calibrated effort almost exactly (reals -0.09..0.58 vs AI 0.33),
+    # so any effort threshold either misses the AI case or flags every real.
+    # av_risk>=0.45 is only reachable when the audio track was actually analyzed.
+    # NOTE: av_risk_addition is NOT passed through _calibrate's affine table for
+    # the pattern (identity there), so 0.45 here == raw 0.45 == anti_correlated.
     if target == "deepfake_video":
-        if (eff or 0) > 0.60 and (avr or 0) >= 0.45:
+        havic_live = "havic.prob_inconsistent" not in gaps
+        if (avr or 0) >= 0.45 and (hav is None or hav > 0.15) and havic_live:
             return ("fully_generated", 1.25, True)
         if (eff or 0) > 0.60 and (avr or 0) < 0.30:
             return ("face_swap_partial", 1.05, True)
@@ -373,8 +385,16 @@ class FusionEngine:
             if spec is None:
                 continue
             state, val = _extract(spec, by_name.get(spec[0]))
+            # Gap-neutral denominator (2026-08-25, real-video calibration):
+            # KNOWN GAPS always count toward the weight sum at zero contribution.
+            # Previously only present signals divided the sum, so a video where
+            # the cross-modal checks were unavailable (no audio track) fused on
+            # its 2 present signals alone and landed in DNU; counting the full
+            # designed weight pool pulls partial-coverage videos toward the
+            # honest CAUTION band while fully-covered risky scans are unchanged.
             if state == "known_gap":
                 known_gaps.append(key)
+                total_w += abs(weight)
                 continue
             if state != "value":
                 missing.append(key)
@@ -420,8 +440,15 @@ class FusionEngine:
                     present_vals.append(float(val2))
             if len(present_vals) >= _CLEAN_MIN_SIGNALS and all(v <= _CLEAN_EPS for v in present_vals):
                 x += -1.8
-        # logistic squash keeps range (0,1) and is robust to weight drift
-        raw = 1.0 / (1.0 + math.exp(-6.0 * x)) if total_w > 0 else 0.0
+        # logistic squash keeps range (0,1) and is robust to weight drift.
+        # Temperature 4.0 (was 6.0, real-video calibration 2026-08-25): with the
+        # gap-neutral denominator, mid-band evidence (real talking-heads at
+        # weighted mean ~0.30-0.45) must land CAUTION, not DNU; k=6 turned
+        # x=0.31 into raw=0.84. k=4 maps that same evidence to ~0.71 boundary /
+        # below, while fully-corroborated risky scans (AI video, x~0.34 after
+        # corroboration + pattern) still clear DO_NOT >= 0.70 via confidence
+        # and pattern boost rather than an overheated squash.
+        raw = 1.0 / (1.0 + math.exp(-4.0 * x)) if total_w > 0 else 0.0
 
         # LR-stack override when provisioned (OOF-trained checkpoint)
         model_id = ""

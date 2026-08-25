@@ -16,8 +16,8 @@ from vishwas.events import Verdict
 from vishwas.fusion import FusionEngine
 
 
-def _ck(name: str, signals: dict) -> CheckResult:
-    return CheckResult(name=name, cost="mid", status="ok", signals=signals, notes="")
+def _ck(name: str, signals: dict, status: str = "ok") -> CheckResult:
+    return CheckResult(name=name, cost="mid", status=status, signals=signals, notes="")
 
 
 def _video_ai(device: str = "generic") -> list[CheckResult]:
@@ -76,9 +76,12 @@ def test_single_weak_signal_is_caution_not_unable():
 
 
 def test_face_swap_partial_pattern():
-    # effort high but AV OK (<0.30) -> face_swap_partial, not fully_generated
+    # effort high (calibrated: 1.0*0.80-0.35=0.45 > 0.60? no -> use 0.97 raw
+    # which calibrates to 0.62) but AV OK (<0.30) -> face_swap_partial,
+    # not fully_generated. Post-recalibration the effort threshold maps to
+    # raw >= 0.95 on this scale.
     checks = [
-        _ck("effort_face_forensics", {"prob_deepfake": 0.80}),
+        _ck("effort_face_forensics", {"prob_deepfake": 0.98}),
         _ck("cross_modal_av", {"av_correlation": 0.2, "alignment_class": "weakly_synced",
                                "av_risk_addition": 0.1}),
         _ck("frame_heuristics", {"prob_deepfake": 0.15}),
@@ -140,6 +143,42 @@ def test_rel_gate_still_aborts_genuine_conflict():
     ok, notes = gate.evaluate(d, checks, _NS(extra={}))
     assert not ok, f"conflicting_detectors must be gated: {notes}"
     assert not d.coherent_pattern, "conflict must NOT be coherent"
+
+
+def test_real_talkinghead_not_do_not_use():
+    # 2026-08-25 real-video calibration regression (Task 1 / gbdt_report §8):
+    # a typical FF++-style REAL talking-head clip — effort mid-band, frameheur
+    # low, NO audio track (cross-modal checks unavailable = known gaps) —
+    # previously fused to DO_NOT_USE because only present signals divided the
+    # weighted sum and effort's old calibration pinned reals at ~0.9 risk.
+    checks = [
+        _ck("effort_face_forensics", {"prob_deepfake": 0.70}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.18}),
+        _ck("demamba_general", {}, status="unavailable"),
+        _ck("cross_modal_av", {}, status="unavailable"),
+        _ck("havic_crossmodal_model", {}, status="unavailable"),
+    ]
+    d = FusionEngine().decide("deepfake_video", checks)
+    assert d.verdict is not Verdict.DO_NOT_USE, (
+        f"real talking-head must NOT be DNU (got {d.verdict} raw={d.score})")
+
+
+def test_ai_with_audio_still_dnu():
+    # The other half of Task 1's contract: a fully-covered AI video (audio
+    # present, av_risk anti-correlated 0.5, havic inconsistent) stays DO_NOT_USE
+    # under the recalibrated scale.
+    checks = [
+        _ck("effort_face_forensics", {"prob_deepfake": 0.677}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.281}),
+        _ck("cross_modal_av", {"av_correlation": -2.0,
+                               "alignment_class": "anti_correlated",
+                               "av_risk_addition": 0.5}),
+        _ck("havic_crossmodal_model", {"prob_inconsistent": 1.0}),
+        _ck("demamba_general", {}, status="unavailable"),
+    ]
+    d = FusionEngine().decide("deepfake_video", checks)
+    assert d.verdict is Verdict.DO_NOT_USE, f"AI video must stay DNU: {d.verdict}"
+    assert any("pattern:fully_generated" in r for r in d.reasons), d.reasons
 
 
 if __name__ == "__main__":
