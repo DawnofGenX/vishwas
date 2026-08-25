@@ -178,6 +178,20 @@ def test_audio_ssl_unavailable_result_verbatim(monkeypatch, tmp_path):
     assert "SSL-complement weights not provisioned" in res[0].notes
 
 
+def test_audio_xlsr_unavailable_and_registered(monkeypatch, tmp_path):
+    """XLSR-Mamba gate: honest unavailable when unprovisioned + wired in analyze."""
+    monkeypatch.delenv("VISHWAS_XLSRMAMBA_WEIGHTS", raising=False)
+    cap = daudio.DeepfakeAudioCapability()
+    res = cap._xlsr_detector(types.SimpleNamespace(), tmp_path / "aud.wav")
+    assert res[0].name == "xlsr_audio_detector"
+    assert res[0].status == "unavailable"
+    assert res[0].signals == {"missing_dependency": "model-weights"}
+    # fusion must map the xlsr signal for the deepfake_audio target
+    from vishwas.fusion import WEIGHTS, _SIGNAL_SOURCES
+    assert "xlsr.prob" in WEIGHTS["deepfake_audio"]
+    assert _SIGNAL_SOURCES["xlsr.prob"][0] == "xlsr_audio_detector"
+
+
 def test_audio_multicrop_unavailable_result_verbatim(monkeypatch, tmp_path):
     monkeypatch.delenv("VISHWAS_AASIST_WEIGHTS", raising=False)
     cap = daudio.DeepfakeAudioCapability()

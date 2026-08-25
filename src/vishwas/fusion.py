@@ -92,6 +92,7 @@ WEIGHTS: dict[str, dict[str, float]] = {
     "deepfake_audio": {
         "fakemamba.prob": 2.5,
         "aasist.prob": 2.5,
+        "xlsr.prob": 2.0,
         "ssl.prob": 2.0,
         "offline.prob": 1.0,
     },
@@ -144,6 +145,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
     # --- deepfake_audio ---
     "fakemamba.prob": ("fakemamba_detector", "prob_deepfake", KIND_DEFAULT_NUM, True),
     "aasist.prob": ("aasist_detector", "prob_deepfake", KIND_DEFAULT_NUM, True),
+    "xlsr.prob": ("xlsr_audio_detector", "prob_deepfake", KIND_DEFAULT_NUM, True),
     "ssl.prob": ("ssl_audio_detector", "prob_deepfake", KIND_DEFAULT_NUM, True),
     "offline.prob": ("audio_offline_features", "prob_deepfake", KIND_DEFAULT_NUM, True),
     # --- cross_modal / image ---
@@ -156,7 +158,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
 # How many independent probability-emitting detectors a target is designed to
 # have — used for selective-prediction coverage.
 _EXPECTED_PROB_DET: dict[str, int] = {
-    "deepfake_video": 3, "deepfake_audio": 3, "cross_modal": 2,
+    "deepfake_video": 3, "deepfake_audio": 4, "cross_modal": 2,
     "image_facecheck": 2, "malicious_file": 3, "url_phishing": 2,
     "gov_document": 0, "document_generic": 0, "unclassified": 0,
 }

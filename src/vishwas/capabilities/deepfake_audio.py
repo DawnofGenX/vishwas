@@ -96,6 +96,7 @@ class DeepfakeAudioCapability:
         n_crops = 3
         out.extend(self._multi_crop("fakemamba", "VISHWAS_FAKEMAMBA_WEIGHTS", n_crops, ctx))
         out.extend(self._multi_crop("aasist", "VISHWAS_AASIST_WEIGHTS", n_crops, ctx))
+        out.extend(self._xlsr_detector(ctx, wav))
         out.extend(self._ssl_detector(ctx, wav))
 
         # Degradation battery (adversarial-robustness input)
@@ -151,6 +152,30 @@ class DeepfakeAudioCapability:
                              "n_crops_scored": len(probs),
                              "max_prob": round(max(probs), 3)},
                             f"{name} pass, median over {len(probs)} crop window(s)")]
+
+    def _xlsr_detector(self, ctx: JobContext, wav_path: Path) -> list[CheckResult]:
+        """XLSR-Mamba-LA second opinion (MIT, arXiv 2411.10027) — independent
+        Mamba-family architecture over a wav2vec2-XLSR frontend. Its checkpoint
+        trains bonafide=1/spoof=0 (INVERTED vs fakemamba); the spec's score()
+        already returns the spoof posterior, so no caller-side flip is needed."""
+        env = "VISHWAS_XLSRMAMBA_WEIGHTS"
+        m = _load_weights(env)
+        if m is None:
+            return [CheckResult("xlsr_audio_detector", "heavy", "unavailable",
+                                {"missing_dependency": "model-weights"},
+                                "XLSR-Mamba weights not provisioned; single-family coverage only")]
+        adapter = _resolve_adapter(env)
+        try:
+            p = _infer_prob(adapter, m, str(wav_path))
+            if p is None:
+                return [CheckResult("xlsr_audio_detector", "heavy", "degraded",
+                                    {}, "XLSR-Mamba detector produced no usable score")]
+            return [CheckResult("xlsr_audio_detector", "heavy", "ok",
+                                {"prob_deepfake": round(min(1.0, max(0.0, p)), 3)},
+                                "XLSR-Mamba second opinion (independent arch family)")]
+        except Exception as e:  # noqa: BLE001
+            return [CheckResult("xlsr_audio_detector", "heavy", "failed",
+                                {"error_class": e.__class__.__name__}, "XLSR detector inference error")]
 
     def _ssl_detector(self, ctx: JobContext, wav_path: Path) -> list[CheckResult]:
         """Complementary SSL probe (wav2vec2-HuBERT class) for diversity against
