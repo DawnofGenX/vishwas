@@ -85,9 +85,20 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "extraction.low_quality": 1.0,
     },
     "deepfake_video": {
+        # demamba.prob RETIRED from the weight map (2026-08-25, Task 6): no arch
+        # spec exists in model_archs/ (registry: aasist/effort/havic/fakemamba/
+        # xlsrmamba), no weights are obtainable, so the check was a permanent
+        # known-gap on 100% of measured rows (84/84) — a dead 2.0-weight slot
+        # that only diluted every verdict's denominator. The capability still
+        # emits its unavailable check (debug shows WHY); if DeMamba weights ever
+        # land, re-add with calibration. _EXPECTED_PROB_DET updated to match.
         "effort.prob": 2.5,
-        "demamba.prob": 2.0,
-        "frameheur.prob": 1.5,
+        # demamba retired (see note above). Post-retirement recalibration
+        # (2026-08-25): effort cal b -0.35 -> -0.45 and frameheur weight
+        # 1.5 -> 1.0, chosen on the 84-row corpus to keep FF++ reals out of
+        # DNU (34/41 = 82%) while every fake still lands >= CAUTION (4 DNU).
+        # AI anchor unchanged: DO_NOT_USE conf ~0.66 pattern fully_generated.
+        "frameheur.prob": 1.0,
         # AV-sync + HAVIC were present in the emitted checks but NOT in this
         # target's weight map (fusion gap, 2026-08-25): an operator's AI video
         # carried av=-2.0 (anti_correlated) and havic=1.0 yet they contributed
@@ -165,7 +176,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
 # How many independent probability-emitting detectors a target is designed to
 # have — used for selective-prediction coverage.
 _EXPECTED_PROB_DET: dict[str, int] = {
-    "deepfake_video": 5, "deepfake_audio": 4, "cross_modal": 2,
+    "deepfake_video": 4, "deepfake_audio": 4, "cross_modal": 2,
     "image_facecheck": 2, "malicious_file": 3, "url_phishing": 2,
     "gov_document": 0, "document_generic": 0, "unclassified": 0,
 }
@@ -176,16 +187,17 @@ _EXPECTED_PROB_DET: dict[str, int] = {
 # against the measured 84-row FF++ corpus (rows_video_v2.jsonl):
 #   - the original effort seed (1.33,-0.05) mapped real talking-head footage
 #     (raw 0.62-0.87) to ~0.78-1.0 risk, fusing every real video to DNU;
-#   - (1.0,-0.35) maps that same real distribution to ~0.27-0.57 (CAUTION band)
-#     while the operator AI video (0.677 raw) still maps to ~0.33 weighted-mean
-#     input and stays DO_NOT_USE once corroborated by av_risk/havic.
+#   - (1.0,-0.45) (post demamba-retirement recalibration) maps that same real
+#     distribution to ~0.17-0.42 (CAUTION band) while the operator AI video
+#     (0.677 raw -> 0.23 calibrated) still reaches DO_NOT_USE via the AV
+#     corroboration path (av_risk + havic), not effort alone.
 #   frameheur control 0.078 -> ~0.20   AI 0.281 -> ~0.60
 #   havic     saturates ~1.0 on both   -> demote (a=0.2) so it can't dominate
 #   av_risk   already a risk-in-[0,.5] -> identity (kept here for clarity)
 #   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
 #                (not speech) -> near-identity until a real-clean corpus lands.
 _CALIBRATE: dict[str, tuple[float, float]] = {
-    "effort.prob": (1.0, -0.35),
+    "effort.prob": (1.0, -0.45),
     "frameheur.prob": (1.97, 0.05),
     "havic.prob_inconsistent": (0.2, 0.0),
     "aasist.prob": (1.0, 0.0),
@@ -232,7 +244,10 @@ def _deepfake_pattern(target: str, signals: dict[str, float],
         havic_live = "havic.prob_inconsistent" not in gaps
         if (avr or 0) >= 0.45 and (hav is None or hav > 0.15) and havic_live:
             return ("fully_generated", 1.25, True)
-        if (eff or 0) > 0.60 and (avr or 0) < 0.30:
+        # face_swap_partial (recalibrated): effort calibrated >0.50 with AV OK.
+        # On the -0.45 scale, raw effort >=0.95 hits this — near-ceiling face
+        # forensics on an audio-consistent clip = localized manipulation class.
+        if (eff or 0) > 0.50 and (avr or 0) < 0.30:
             return ("face_swap_partial", 1.05, True)
         if len(strong) >= 2:
             return ("corroborated_multi", 1.25, True)
