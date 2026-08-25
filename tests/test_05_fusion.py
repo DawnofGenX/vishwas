@@ -70,13 +70,17 @@ def test_benign_low_signal_caution_band():
 
 
 def test_detector_disagreement_penalised_and_reported():
+    # Fusion v2 contract: for deepfake targets the blanket 0.35-spread ALSO
+    # penalises confidence, but the reason is a PATTERN (which detectors fired)
+    # rather than a raw "disagreement" token — different generators fool
+    # different detectors, so spread alone is not abstention.
     checks = [
         cr("fakemamba_detector", "ok", prob_deepfake=0.1),
         cr("aasist_detector", "ok", prob_deepfake=0.9),
     ]
     d = FusionEngine().decide("deepfake_audio", checks)
     assert d.disagreement == pytest.approx(0.8)
-    assert any("disagreement" in r for r in d.reasons)
+    assert any("pattern" in r for r in d.reasons), f"expected a pattern reason: {d.reasons}"
     assert d.confidence <= 0.4, "strong disagreement must cap confidence"
 
 

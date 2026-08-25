@@ -88,6 +88,13 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "effort.prob": 2.5,
         "demamba.prob": 2.0,
         "frameheur.prob": 1.5,
+        # AV-sync + HAVIC were present in the emitted checks but NOT in this
+        # target's weight map (fusion gap, 2026-08-25): an operator's AI video
+        # carried av=-2.0 (anti_correlated) and havic=1.0 yet they contributed
+        # ZERO to the verdict. Wire them in; pattern layer uses them for
+        # corroboration. HAVIC demoted (saturates ~1.0, poor separation).
+        "av_risk_addition": 2.0,
+        "havic.prob_inconsistent": 1.2,
     },
     "deepfake_audio": {
         "fakemamba.prob": 2.5,
@@ -158,10 +165,83 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
 # How many independent probability-emitting detectors a target is designed to
 # have — used for selective-prediction coverage.
 _EXPECTED_PROB_DET: dict[str, int] = {
-    "deepfake_video": 3, "deepfake_audio": 4, "cross_modal": 2,
+    "deepfake_video": 5, "deepfake_audio": 4, "cross_modal": 2,
     "image_facecheck": 2, "malicious_file": 3, "url_phishing": 2,
     "gov_document": 0, "document_generic": 0, "unclassified": 0,
 }
+
+# Per-signal affine calibration: value' = clamp01(a*value + b).
+# Seeds from 2026-08-25 single-sample probe (known-AI video vs ffmpeg testsrc
+# control, /tmp/analysis/fusion/calibration_notes.md). Purpose: bring raw
+# posteriors onto a comparable risk scale and widen real separation:
+#   effort    control 0.302 -> ~0.35   AI 0.677 -> ~0.85
+#   frameheur control 0.078 -> ~0.20   AI 0.281 -> ~0.60
+#   havic     saturates ~1.0 on both   -> demote (a=0.2) so it can't dominate
+#   av_risk   already a risk-in-[0,.5] -> identity (kept here for clarity)
+#   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
+#                (not speech) -> near-identity until a real-clean corpus lands.
+# Refine these with a proper held-out set; this is a DATA change, not code.
+_CALIBRATE: dict[str, tuple[float, float]] = {
+    "effort.prob": (1.33, -0.05),
+    "frameheur.prob": (1.97, 0.05),
+    "havic.prob_inconsistent": (0.2, 0.0),
+    "aasist.prob": (1.0, 0.0),
+    "xlsr.prob": (1.0, 0.0),
+    "av_risk_addition": (1.0, 0.0),
+}
+
+
+def _calibrate(key: str, val: float) -> float:
+    """Apply per-signal affine calibration; clamp to [0,1]."""
+    a, b = _CALIBRATE.get(key, (1.0, 0.0))
+    return min(1.0, max(0.0, a * val + b))
+
+
+# Deepfake pattern classifier (Fusion v2, 2026-08-25): replaces naive
+# spread-abstention with which-detectors-fired classification. Different AI
+# generators fool different detectors, so cross-detector spread is EVIDENCE
+# (a mode), not a reason to abstain. Signals are the CALIBRATED values.
+# Returns (pattern_key, conf_multiplier, is_fake_aligned).
+def _deepfake_pattern(target: str, signals: dict[str, float],
+                      gaps: list[str]) -> tuple[str, float, bool]:
+    if target not in ("deepfake_video", "deepfake_audio"):
+        return ("generic", 1.0, False)
+    eff = signals.get("effort.prob")
+    heu = signals.get("frameheur.prob")
+    avr = signals.get("av_risk_addition")
+    hav = signals.get("havic.prob_inconsistent")
+    aas = signals.get("aasist.prob")
+    xlr = signals.get("xlsr.prob")
+
+    elevated = [k for k, v in signals.items() if (v or 0) > 0.30]
+    strong = [k for k, v in signals.items() if (v or 0) > 0.55]
+
+    # fully_generated: face-forensics synthetic + AV anti-correlated
+    if target == "deepfake_video":
+        if (eff or 0) > 0.60 and (avr or 0) >= 0.45:
+            return ("fully_generated", 1.25, True)
+        if (eff or 0) > 0.60 and (avr or 0) < 0.30:
+            return ("face_swap_partial", 1.05, True)
+        if len(strong) >= 2:
+            return ("corroborated_multi", 1.25, True)
+        if len(elevated) >= 2:
+            return ("corroborated_multi", 1.1, True)
+        if (eff or 0) > 0.50 or (avr or 0) >= 0.45:
+            return ("weak_signal_single", 1.0, True)
+        return ("generic", 1.0, False)
+
+    # deepfake_audio: include fakemamba/ssl in the mode check
+    fake = signals.get("fakemamba.prob")
+    ssl = signals.get("ssl.prob")
+    audio_strong = [v for v in (aas, xlr, fake, ssl) if v is not None and v > 0.55]
+    audio_weak = [v for v in (aas, xlr, fake, ssl) if v is not None and v < 0.30]
+    if len(audio_strong) >= 2 and len(audio_weak) >= 1:
+        return ("conflicting_detectors", 1.0, True)   # two say fake, one says real
+    if len(audio_strong) >= 2:
+        return ("corroborated_multi", 1.25, True)
+    if (aas or 0) > 0.55 or (xlr or 0) > 0.55 or (fake or 0) > 0.55:
+        return ("weak_signal_single", 1.0, True)
+    return ("generic", 1.0, False)
 
 
 def _extract(spec: tuple[str, str, str, bool], c: CheckResult | None) -> tuple[str, Any]:
@@ -296,9 +376,10 @@ class FusionEngine:
                 continue
             assert val is not None
             total_w += abs(weight)
-            s += weight * val
-            if spec[3] and isinstance(val, float):
-                probs.append(val)
+            cv = _calibrate(key, float(val))       # per-signal calibration (v2)
+            s += weight * cv
+            if spec[3]:
+                probs.append(cv)
 
         x = s / total_w if total_w > 0 else 0.0
         # total_w==0 guard (2026-08-25): targets with no mapped weights (document_generic,
@@ -377,25 +458,61 @@ class FusionEngine:
         else:
             verdict = Verdict.CAUTION
 
+        # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
+        # different detectors, so spread IS a signal (a mode), not abstention.
+        pattern = "generic"
+        pattern_mult = 1.0
+        reasons_early: list[str] = []
+        if target in ("deepfake_video", "deepfake_audio"):
+            # recover calibrated values per weighted signal for the classifier
+            pat_signals: dict[str, float] = {}
+            for key, weight in wmap.items():
+                spec = _SIGNAL_SOURCES.get(key)
+                if spec is None:
+                    continue
+                st, val = _extract(spec, by_name.get(spec[0]))
+                if st == "value" and isinstance(val, (int, float)):
+                    pat_signals[key] = _calibrate(key, float(val))
+            pattern, pattern_mult, fake_aligned = _deepfake_pattern(target, pat_signals, known_gaps)
+            # a corroborated generative pattern boosts confidence when the verdict
+            # is danger-aligned; a clean-aligned pattern caps it to CAUTION honest.
+            if pattern != "generic":
+                reasons_early.append(f"pattern:{pattern}")
+
         # confidence: distance from midpoint, scaled by detector coverage,
-        # penalized by inter-detector disagreement
+        # penalized by inter-detector disagreement. Fusion v2: the blanket
+        # 0.35-spread penalty is REPLACED for deepfake targets — corroboration
+        # across detectors of different types is a confidence BOOST, not a
+        # penalty, when the SAME mode (fake-aligned) fires. Only genuinely
+        # conflicting modes (fake vs clean) suppress confidence.
         exp_det = _EXPECTED_PROB_DET.get(target, 1)
         coverage = min(1.0, (len(probs) / exp_det)) if exp_det else 1.0
         certainty = max(0.0, min(1.0, 2.0 * abs(0.5 - raw) * (0.4 + 0.6 * coverage)))
-        if disagreement > 0.35:
-            certainty *= 0.5
-            if verdict is Verdict.TRUST:
-                verdict = Verdict.CAUTION
-            certainty = min(certainty, 0.4)
+        if target in ("deepfake_video", "deepfake_audio"):
+            # boosting pattern (fake-aligned corroboration) raises certainty
+            if pattern_mult > 1.0 and raw >= CAUT_LO:
+                certainty = min(1.0, certainty * pattern_mult)
+            # conflicting modes: mixed fake/clean alignment -> keep spread penalty
+            elif disagreement > 0.35:
+                certainty *= 0.5
+                if verdict is Verdict.TRUST:
+                    verdict = Verdict.CAUTION
+                certainty = min(certainty, 0.4)
+        else:
+            if disagreement > 0.35:
+                certainty *= 0.5
+                if verdict is Verdict.TRUST:
+                    verdict = Verdict.CAUTION
+                certainty = min(certainty, 0.4)
         if missing:
             certainty *= 0.7
 
-        reasons: list[str] = []
+        reasons: list[str] = reasons_early
         if missing:
             reasons.append("incomplete_evidence:" + ";".join(missing[:4]))
         if known_gaps:
             reasons.append(f"gated_tools:{len(known_gaps)}")
-        if disagreement > 0.35:
+        if disagreement > 0.35 and target not in ("deepfake_video", "deepfake_audio"):
             reasons.append(f"detector_disagreement:{disagreement:.2f}")
         if model_id:
             reasons.append(f"stack:{model_id}")
