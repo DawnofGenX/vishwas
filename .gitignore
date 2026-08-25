@@ -13,3 +13,4 @@ output/renders/
 /deploy/.env
 /deploy/openwa-reply.env
 /deploy/verisafe-secrets.env
+/deploy/vishwas-secrets.env
