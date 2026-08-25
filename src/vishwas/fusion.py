@@ -301,6 +301,11 @@ class FusionDecision:
     model_ids: list[str] = field(default_factory=list)
     known_gaps: list[str] = field(default_factory=list)
     missing_evidence: list[str] = field(default_factory=list)
+    # Fusion v2: set when a deepfake/detector pattern fires COHERENTLY (e.g.
+    # fully_generated, corroborated_multi). Tells the ReliabilityGate that
+    # cross-detector spread is CORROBORATION across detectors of different
+    # types, not conflict — so it must not abort on spread alone.
+    coherent_pattern: bool = False
 
 
 # --------------------------------------------------------------- engine ----
@@ -522,7 +527,10 @@ class FusionEngine:
                               disagreement=round(disagreement, 3), reasons=reasons,
                               confidence=round(certainty, 3),
                               model_ids=[model_id] if model_id else [],
-                              known_gaps=known_gaps, missing_evidence=missing)
+                              known_gaps=known_gaps, missing_evidence=missing,
+                              coherent_pattern=(pattern in ("fully_generated",
+                                                            "corroborated_multi",
+                                                            "face_swap_partial")))
 
 
     def load_trained(self, training_dir) -> int:
@@ -628,7 +636,10 @@ class ReliabilityGate:
         if not usable:
             return False, ["zero_usable_signals"]
 
-        if fused.disagreement > self.max_disagreement:
+        # Fusion v2: a COHERENT deepfake pattern (multiple detectors of DIFFERENT
+        # types agreeing on the same generative mode) is corroboration, not
+        # conflict — do not abort on spread when the pattern is coherent.
+        if fused.disagreement > self.max_disagreement and not fused.coherent_pattern:
             ok = False
             notes.append(f"disagreement={fused.disagreement:.2f}>{self.max_disagreement}")
 

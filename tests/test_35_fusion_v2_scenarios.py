@@ -43,6 +43,9 @@ def test_operator_ai_video_high_confidence_dnu():
     assert d.verdict is Verdict.DO_NOT_USE, f"expected DO_NOT_USE, got {d.verdict}"
     assert d.confidence >= 0.45, f"corroborated generative evidence must be confident: {d.confidence}"
     assert any("pattern:fully_generated" in r for r in d.reasons), f"missing pattern: {d.reasons}"
+    # Fusion v2 gate contract: this coherent pattern must NOT be aborted by the
+    # ReliabilityGate on spread alone (would otherwise force UNABLE).
+    assert d.coherent_pattern is True, "fully_generated must be a coherent pattern"
 
 
 def test_clean_video_still_reaches_trust():
@@ -105,6 +108,38 @@ def test_corroborated_audio_boost():
     d = FusionEngine().decide("deepfake_audio", checks)
     assert d.verdict is Verdict.DO_NOT_USE
     assert any("pattern:corroborated_multi" in r for r in d.reasons), d.reasons
+
+
+def test_rel_gate_skips_spread_abort_for_coherent_pattern():
+    # Fully_generated pattern: per-detector spread is high but coherence is
+    # strong -> gate must NOT force UNABLE (was the 2026-08-25 bug).
+    from types import SimpleNamespace as _NS
+    from vishwas.fusion import ReliabilityGate
+
+    d = FusionEngine().decide("deepfake_video", _video_ai())
+    gate = ReliabilityGate()
+    ctx = _NS(extra={})
+    ok, notes = gate.evaluate(d, _video_ai(), ctx)
+    assert ok, f"coherent pattern must pass the gate: {notes}"
+    assert d.coherent_pattern, "pattern coherence flag must be set"
+
+
+def test_rel_gate_still_aborts_genuine_conflict():
+    # Audio with two-fake-then-one-real is a conflict -> gate aborts
+    from types import SimpleNamespace as _NS
+    from vishwas.fusion import ReliabilityGate
+
+    checks = [
+        _ck("fakemamba_detector", {"prob_deepfake": 0.9}),
+        _ck("aasist_detector", {"prob_deepfake": 0.85}),
+        _ck("xlsr_audio_detector", {"prob_deepfake": 0.1}),
+        _ck("audio_offline_features", {"prob_deepfake": 0.3}),
+    ]
+    d = FusionEngine().decide("deepfake_audio", checks)
+    gate = ReliabilityGate()
+    ok, notes = gate.evaluate(d, checks, _NS(extra={}))
+    assert not ok, f"conflicting_detectors must be gated: {notes}"
+    assert not d.coherent_pattern, "conflict must NOT be coherent"
 
 
 if __name__ == "__main__":
