@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from verisafe import rag_cache as rc
-from verisafe.capabilities import gov_document as gd
-from verisafe.capabilities.base import CheckResult
-from verisafe.events import Artifact, InputType, JobContext, MediaKind, Verdict
-from verisafe.report import ReportBuilder
+from vishwas import rag_cache as rc
+from vishwas.capabilities import gov_document as gd
+from vishwas.capabilities.base import CheckResult
+from vishwas.events import Artifact, InputType, JobContext, MediaKind, Verdict
+from vishwas.report import ReportBuilder
 
 
 def _catalog(tmp_path: Path) -> Path:
@@ -31,7 +31,7 @@ def _catalog(tmp_path: Path) -> Path:
 
 def _digest_env(tmp_path: Path, monkeypatch) -> None:
     """Point the freshness gate's catalog dir at the hermetic fixture dir."""
-    monkeypatch.setenv("VERISAFE_RAG_DIGEST_DIR", str(tmp_path / "digests"))
+    monkeypatch.setenv("VISHWAS_RAG_DIGEST_DIR", str(tmp_path / "digests"))
 
 
 def _idx(tmp_path: Path, *, version="1", templates=None, staleness_days=90,

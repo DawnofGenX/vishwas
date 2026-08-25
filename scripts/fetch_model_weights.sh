@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# fetch_model_weights.sh — VeriSafe model weights fetcher (guarded, DRY_RUN-default)
+# fetch_model_weights.sh — Vishwas model weights fetcher (guarded, DRY_RUN-default)
 #
 # Per .delegation/brief_weights.md:
 #   - set -euo pipefail
 #   - idempotent: skips already-complete downloads by size compare (verify_sizes)
 #   - downloads ONLY real + public_no_auth artifacts into
-#     ${VERISAFE_MODEL_DIR:-/home/hermes/verisafe/.models}/<gate>/
-#   - DRY_RUN default: VERISAFE_FETCH_DRY_RUN defaults to 1 (print-only); set 0 to actually download
+#     ${VISHWAS_MODEL_DIR:-/home/hermes/vishwas/.models}/<gate>/
+#   - DRY_RUN default: VISHWAS_FETCH_DRY_RUN defaults to 1 (print-only); set 0 to actually download
 #   - never pulls multi-GB HEAVY files on this box unless DRY_RUN=0 and explicitly wanted
 #
 # Usage:
 #   scripts/fetch_model_weights.sh                  # DRY_RUN=1 (default): prints curl commands only
-#   VERISAFE_FETCH_DRY_RUN=0 scripts/fetch_model_weights.sh   # real downloads
-#   VERISAFE_MODEL_DIR=/data/models scripts/fetch_model_weights.sh
+#   VISHWAS_FETCH_DRY_RUN=0 scripts/fetch_model_weights.sh   # real downloads
+#   VISHWAS_MODEL_DIR=/data/models scripts/fetch_model_weights.sh
 set -euo pipefail
 
-MODEL_DIR="${VERISAFE_MODEL_DIR:-/home/hermes/verisafe/.models}"
-DRY_RUN="${VERISAFE_FETCH_DRY_RUN:-1}"
+MODEL_DIR="${VISHWAS_MODEL_DIR:-/home/hermes/vishwas/.models}"
+DRY_RUN="${VISHWAS_FETCH_DRY_RUN:-1}"
 
 log() { printf '[fetch_model_weights] %s\n' "$*"; }
 
@@ -65,7 +65,7 @@ main() {
   log "MODEL_DIR=$MODEL_DIR DRY_RUN=$DRY_RUN"
 
   # --- Explicitly-skipped gates (HEAVY / unavailable / non-existent / token-gated) ---
-  echo "SKIP effort: HEAVY (>~1GB transformer x3 checkpoints, CC BY-NC) — not viable under VeriSafe thermal caps"
+  echo "SKIP effort: HEAVY (>~1GB transformer x3 checkpoints, CC BY-NC) — not viable under Vishwas thermal caps"
   echo "SKIP vbsta: confirmed non-existent project (purged P10)"
   echo "SKIP demamba: no public checkpoint yet (source zip only, PARTIAL)"
   echo "SKIP fakemamba: empty repo (README len=0, no releases/assets)"

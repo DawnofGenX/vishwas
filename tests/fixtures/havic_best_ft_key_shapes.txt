@@ -1,4 +1,4 @@
-# Probed key+shape map of /opt/verisafe/models/havic/best_ft/best_ft_model.pth
+# Probed key+shape map of /opt/vishwas/models/havic/best_ft/best_ft_model.pth
 # (456 tensors). Metadata-only probe: zip data.pkl parsed with a stub
 # unpickler; NO tensor storage was read and torch.load was never called.
 # Generated 2026-08-21 for tests/test_21_havic_arch.py 1:1 key-map checks.

@@ -2,7 +2,7 @@
 
 Purpose: enable the `yara_x` evidence family of the `malicious_file` capability
 (Finding C, `docs/research/ZERO_RETENTION_E2E_2026-08-21.md`). Loaded via
-`VERISAFE_YARA_RULES` (or the in-repo default `src/verisafe/assets/yara_rules/`).
+`VISHWAS_YARA_RULES` (or the in-repo default `src/vishwas/assets/yara_rules/`).
 
 ## Source ruleset (fetched exactly once, 2026-08-22)
 
@@ -27,8 +27,8 @@ Purpose: enable the `yara_x` evidence family of the `malicious_file` capability
 
 - 79 files `rtc_*.yar` — curated flat subset of upstream `rules/*/production/yara/`
   (1 rule per file, 79 rules). Flat names: `rtc_<TOOL>_<upstream-filename>`.
-- `verisafe_starter.yar` — symlink to the in-repo MIT-licensed starter
-  (`../../src/verisafe/assets/yara_rules/verisafe_starter.yar`, 3 rules incl.
+- `vishwas_starter.yar` — symlink to the in-repo MIT-licensed starter
+  (`../../src/vishwas/assets/yara_rules/vishwas_starter.yar`, 3 rules incl.
   `Eicar_Test_File`). Symlinked, not copied, to keep one source of truth.
 - Loader constraint honored: `sorted(glob("*.yar*"))[:80]` → exactly 80 entries,
   all verified to compile with `yara_x` from `/home/hermes/pylibs`
@@ -39,7 +39,7 @@ Purpose: enable the `yara_x` evidence family of the `malicious_file` capability
 ### Excluded from upstream (and why)
 
 - `all-yara.yar` (repo monolith) — EXCLUDED: fails yara-x compile (`error[E014]: invalid regular expression`; yara-x is stricter than legacy YARA). The per-tool files are the same rules split out; 172 of 172 individual files compile cleanly.
-- 77 `production/` files beyond the 79-file cap — EXCLUDED to respect the loader's `glob("*.yar*")[:80]` cap (see `src/verisafe/capabilities/malware_file.py`); selection guarantees at least one rule per tool family (55/55 covered) then fills alphabetically. Full upstream set remains re-fetchable via the pinned tarball.
+- 77 `production/` files beyond the 79-file cap — EXCLUDED to respect the loader's `glob("*.yar*")[:80]` cap (see `src/vishwas/capabilities/malware_file.py`); selection guarantees at least one rule per tool family (55/55 covered) then fills alphabetically. Full upstream set remains re-fetchable via the pinned tarball.
 - 16 non-production-tier files (`supplemental/`, `new/`) — EXCLUDED: lower-fidelity hunting rules; production tier preferred for false-positive safety.
 
 ## File manifest (sha256 per file)
@@ -128,17 +128,17 @@ Purpose: enable the `yara_x` evidence family of the `malicious_file` capability
 
 ## Durable enablement (env wiring)
 
-`VERISAFE_YARA_RULES=/home/hermes/verisafe/rules/yara`
+`VISHWAS_YARA_RULES=/home/hermes/vishwas/rules/yara`
 
-- The live systemd user unit `~/.config/systemd/user/verisafe-webhook.service`
+- The live systemd user unit `~/.config/systemd/user/vishwas-webhook.service`
   (owned by the main agent — do not edit the unit) already loads
-  `EnvironmentFile=/home/hermes/verisafe/deploy/verisafe-secrets.env`, so the
+  `EnvironmentFile=/home/hermes/vishwas/deploy/vishwas-secrets.env`, so the
   line above was added to that file. After a `systemctl --user restart
-  verisafe-webhook.service` the webhook path picks the bundle up.
-- CLI / manual runs: `export VERISAFE_YARA_RULES=/home/hermes/verisafe/rules/yara`
-  before `python3 -m verisafe.app cli --file ... --media-type document`.
+  vishwas-webhook.service` the webhook path picks the bundle up.
+- CLI / manual runs: `export VISHWAS_YARA_RULES=/home/hermes/vishwas/rules/yara`
+  before `python3 -m vishwas.app cli --file ... --media-type document`.
 - Without the env var the loader falls back to the in-repo starter dir
-  (`src/verisafe/assets/yara_rules/`, EICAR + 2 generic rules) — degraded but
+  (`src/vishwas/assets/yara_rules/`, EICAR + 2 generic rules) — degraded but
   functional.
 
 ## Update procedure

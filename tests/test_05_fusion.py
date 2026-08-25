@@ -11,10 +11,10 @@ import pathlib
 
 import pytest
 
-from verisafe.events import Verdict, InputType
-from verisafe.fusion import FusionEngine, ReliabilityGate
-from verisafe.capabilities.base import CheckResult
-from verisafe.events import JobContext, Artifact
+from vishwas.events import Verdict, InputType
+from vishwas.fusion import FusionEngine, ReliabilityGate
+from vishwas.capabilities.base import CheckResult
+from vishwas.events import JobContext, Artifact
 
 
 def cr(name, status, **signals):
@@ -27,7 +27,7 @@ def test_feature_vector_layout_pairs_value_with_gap_flag():
     checks = [cr("phish_heuristics", "ok", score_norm=0.4, young_domain=False)]
     vec = FusionEngine.feature_vector("url_phishing", checks)
     # one (value, gap) pair per weight key
-    from verisafe import fusion as _fm
+    from vishwas import fusion as _fm
     n_weights = len(_fm.WEIGHTS["url_phishing"])
     assert len(vec) == 2 * n_weights
     assert all(isinstance(v, float) for v in vec)
@@ -111,7 +111,7 @@ def ctx(tmp_path):
 
 def test_gate_zero_usable_signals_fails(ctx):
     g = ReliabilityGate()
-    from verisafe.fusion import FusionDecision
+    from vishwas.fusion import FusionDecision
     fused = FusionDecision(verdict=Verdict.CAUTION, score=0.5, raw=0.5, disagreement=0.0)
     ok, notes = g.evaluate(fused, [cr("x", "unavailable")], ctx)
     assert ok is False
@@ -119,7 +119,7 @@ def test_gate_zero_usable_signals_fails(ctx):
 
 
 def test_gate_passes_on_clean_consistent_evidence(ctx):
-    from verisafe.fusion import FusionDecision
+    from vishwas.fusion import FusionDecision
     fused = FusionDecision(verdict=Verdict.CAUTION, score=0.5, raw=0.5, disagreement=0.0)
     ok, notes = ReliabilityGate().evaluate(
         fused, [cr("phish_heuristics", "ok", score_norm=0.5)], ctx)
@@ -127,7 +127,7 @@ def test_gate_passes_on_clean_consistent_evidence(ctx):
 
 
 def test_gate_blocks_excessive_disagreement(ctx):
-    from verisafe.fusion import FusionDecision
+    from vishwas.fusion import FusionDecision
     fused = FusionDecision(verdict=Verdict.DO_NOT_USE, score=0.8, raw=0.8, disagreement=0.9)
     ok, notes = ReliabilityGate().evaluate(
         fused, [cr("fakemamba_detector", "ok", prob_deepfake=0.1),
@@ -138,7 +138,7 @@ def test_gate_blocks_excessive_disagreement(ctx):
 
 def test_gate_flags_authoritative_conflict(ctx):
     """valid signature object but DigiLocker says NOT verified -> conflict."""
-    from verisafe.fusion import FusionDecision
+    from vishwas.fusion import FusionDecision
     fused = FusionDecision(verdict=Verdict.TRUST, score=0.2, raw=0.2, disagreement=0.0)
     checks = [
         cr("digital_signature", "ok", has_sig_object=True),

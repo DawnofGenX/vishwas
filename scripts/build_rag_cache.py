@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build the VeriSafe RAG template-cache (idempotent).
+"""Build the Vishwas RAG template-cache (idempotent).
 
 Stdlib + urllib ONLY. Honors:
-  VERISAFE_RAG_CACHE   cache dir   (default /home/hermes/rag-cache)
-  VERISAFE_RAG_VERSION version tag (default "1")
+  VISHWAS_RAG_CACHE   cache dir   (default /home/hermes/rag-cache)
+  VISHWAS_RAG_VERSION version tag (default "1")
 
 Deterministic content (always written, no network):
   * document_templates  - derived from gov_document.DOC_TYPE_LEXICON (derived=true)
@@ -305,8 +305,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-network", action="store_true",
                     help="skip the live refresh (deterministic classes only)")
     args = ap.parse_args(argv)
-    cache_dir = Path(os.environ.get("VERISAFE_RAG_CACHE", "/home/hermes/rag-cache"))
-    version = os.environ.get("VERISAFE_RAG_VERSION", "1")
+    cache_dir = Path(os.environ.get("VISHWAS_RAG_CACHE", "/home/hermes/rag-cache"))
+    version = os.environ.get("VISHWAS_RAG_VERSION", "1")
     res = build(cache_dir, version, do_network=not args.no_network)
     print(json.dumps(res, indent=2))
     return 0

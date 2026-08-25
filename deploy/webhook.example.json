@@ -1,5 +1,5 @@
 {
-  "url": "http://verisafe:2785/webhook/inbound",
+  "url": "http://vishwas:2785/webhook/inbound",
   "events": ["message.received"],
   "secret": "REPLACE_ME_openssl_rand_hex_32"
 }

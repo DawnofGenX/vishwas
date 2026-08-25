@@ -19,8 +19,8 @@ import urllib.error
 
 import pytest
 
-from verisafe import vt_client
-from verisafe.vt_client import (VtClient, VtResult, api_key, available,
+from vishwas import vt_client
+from vishwas.vt_client import (VtClient, VtResult, api_key, available,
                                 base64url, check_hash, check_url, map_verdict)
 
 
@@ -76,7 +76,7 @@ def _url_payload(overview: dict, category: str = "website") -> dict:
 
 # ------------------------------------------------------------------- a ----
 def test_no_key_unavailable_and_capability_output(monkeypatch):
-    monkeypatch.delenv("VERISAFE_VT_API_KEY", raising=False)
+    monkeypatch.delenv("VISHWAS_VT_API_KEY", raising=False)
     assert api_key() is None
     assert available() is False
     res = check_hash("a" * 64)
@@ -85,7 +85,7 @@ def test_no_key_unavailable_and_capability_output(monkeypatch):
     assert "not provisioned" in res.note
 
     # Capability keeps its EXACT current no-key result verbatim.
-    from verisafe.capabilities.malware_file import MaliciousFileCapability
+    from vishwas.capabilities.malware_file import MaliciousFileCapability
     cap = MaliciousFileCapability()
     art = types.SimpleNamespace(sha256="ab" * 32)
     ctx = types.SimpleNamespace(vt_api_key=None)
@@ -99,7 +99,7 @@ def test_no_key_unavailable_and_capability_output(monkeypatch):
 
 # ------------------------------------------------------------------- b ----
 def test_clean_stats_low_verdict(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     stats = {"malicious": 0, "suspicious": 0, "undetected": 71, "harmless": 2}
     c, op = _client([_file_payload(stats)])
     res = c.check_hash("c" * 64)
@@ -113,7 +113,7 @@ def test_clean_stats_low_verdict(monkeypatch):
 
 # ------------------------------------------------------------------- c ----
 def test_one_malicious_high_verdict_and_passthrough(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     stats = {"malicious": 1, "suspicious": 2, "undetected": 70}
     c, op = _client([_file_payload(stats, category="trojan")])
     res = c.check_hash("d" * 64)
@@ -127,7 +127,7 @@ def test_one_malicious_high_verdict_and_passthrough(monkeypatch):
 
 
 def test_suspicious_counts_mid(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     assert map_verdict({"malicious": 0, "suspicious": 1}) == "mid"
     assert map_verdict({"malicious": 0, "suspicious": 2}) == "mid"
     assert map_verdict({"malicious": 0, "suspicious": 3}) == "high"
@@ -136,7 +136,7 @@ def test_suspicious_counts_mid(monkeypatch):
 
 
 def test_url_overview_shape(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     overview = {"malicious": 0, "suspicious": 0, "undetected": 73}
     c, _op = _client([_url_payload(overview)])
     res = c.check_url("https://example.com/phish")
@@ -147,7 +147,7 @@ def test_url_overview_shape(monkeypatch):
 
 # ------------------------------------------------------------------- d ----
 def test_429_twice_then_success(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     e429 = lambda: urllib.error.HTTPError(  # noqa: E731
         "https://x", 429, "rate limited", {"Retry-After": "2"}, io.BytesIO(b""))
     stats = {"malicious": 0, "harmless": 73}
@@ -163,7 +163,7 @@ def test_429_twice_then_success(monkeypatch):
 
 # ------------------------------------------------------------------- e ----
 def test_persistent_429_exhausts_to_unavailable(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     e429 = lambda: urllib.error.HTTPError(  # noqa: E731
         "https://x", 429, "rate limited", {}, io.BytesIO(b""))
     c, op = _client([e429()])  # single entry repeats
@@ -177,7 +177,7 @@ def test_persistent_429_exhausts_to_unavailable(monkeypatch):
 
 # ------------------------------------------------------------------- f ----
 def test_urlerror_graceful_unavailable(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     err = urllib.error.URLError("connection timed out")
     c, op = _client([err])
     res = c.check_url("https://unreachable.example/x")
@@ -187,7 +187,7 @@ def test_urlerror_graceful_unavailable(monkeypatch):
 
 
 def test_404_is_clean_negative(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
     e404 = lambda: urllib.error.HTTPError(  # noqa: E731
         "https://x", 404, "not found", {}, io.BytesIO(b""))
     c, op = _client([e404()])
@@ -217,8 +217,8 @@ def test_base64url_known_vectors():
 
 # ------------------------------------------------- capability integration --
 def test_malware_file_vt_ok_result_shape(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
-    from verisafe.capabilities.malware_file import MaliciousFileCapability
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
+    from vishwas.capabilities.malware_file import MaliciousFileCapability
     cap = MaliciousFileCapability()
     art = types.SimpleNamespace(sha256="ab" * 32)
     ctx = types.SimpleNamespace(vt_api_key="test-key")
@@ -235,8 +235,8 @@ def test_malware_file_vt_ok_result_shape(monkeypatch):
 
 
 def test_malware_file_vt_unavailable_on_exhaustion(monkeypatch):
-    monkeypatch.setenv("VERISAFE_VT_API_KEY", "test-key")
-    from verisafe.capabilities.malware_file import MaliciousFileCapability
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
+    from vishwas.capabilities.malware_file import MaliciousFileCapability
     cap = MaliciousFileCapability()
     art = types.SimpleNamespace(sha256="cd" * 32)
     ctx = types.SimpleNamespace(vt_api_key="test-key")

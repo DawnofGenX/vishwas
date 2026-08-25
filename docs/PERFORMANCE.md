@@ -8,7 +8,7 @@ Every job runs under one wall-clock deadline:
 
 | Knob | Default | Source | Meaning |
 |---|---|---|---|
-| `VERISAFE_BUDGET_S` / `--budget-s` | **300s** | env / CLI flag | Hard deadline from job start; checked before every stage (`JobContext.expired()`) |
+| `VISHWAS_BUDGET_S` / `--budget-s` | **300s** | env / CLI flag | Hard deadline from job start; checked before every stage (`JobContext.expired()`) |
 | Stage floor | **10s** | `_run()` in `orchestrator.py` | A stage is never *started* with <10s remaining — it records `*.timeout` (status `skipped`) instead, so partial work can't straddle the deadline |
 | Subprocess timeouts | per-call | each capability | e.g. clamscan 90s, ffprobe 15s, browser fetch ≤ 2× redirect hops × 6s |
 
@@ -38,12 +38,12 @@ Per-stage wall time is recorded into `JobOutcome.fusion_trace.stage_timings_s` a
 
 | Binary / process | Env var | Default | Rationale |
 |---|---|---|---|
-| ffmpeg | `VERISAFE_FFMPEG_THREADS` | **2** | >2 threads measurably pushes the 8250U toward its thermal ceiling under sustained encode/decode; 2 gives most of the throughput on single-file workloads |
+| ffmpeg | `VISHWAS_FFMPEG_THREADS` | **2** | >2 threads measurably pushes the 8250U toward its thermal ceiling under sustained encode/decode; 2 gives most of the throughput on single-file workloads |
 | ffprobe | inherits | 2 (same flag) | probing barely uses threads anyway |
 | Python pool for heavy stages | `_HEAVY_POOL` in `orchestrator.py` | 2 workers | bounds concurrent model runs to what the i5-8250U can sustain without tripping (~89C was observed as the max in the Aug-7 incident; we want <80C steady) |
 | Webhook server | stdlib `ThreadingHTTPServer` daemon threads | unbounded accept, 2 compute pool | accepts fast, computes bounded |
 
-The thermal monitor script (`~/.hermes/scripts/thermal-monitor.sh`) logs core temps every 5s; the cron watchdog alerts on CRITICAL. If you see sustained >80C during VeriSafe batches, drop `VERISAFE_FFMPEG_THREADS` to 1 and/or lower `_HEAVY_POOL` before scaling volume.
+The thermal monitor script (`~/.hermes/scripts/thermal-monitor.sh`) logs core temps every 5s; the cron watchdog alerts on CRITICAL. If you see sustained >80C during Vishwas batches, drop `VISHWAS_FFMPEG_THREADS` to 1 and/or lower `_HEAVY_POOL` before scaling volume.
 
 ## 3. Conservative short-circuit (P8)
 
@@ -71,7 +71,7 @@ Stages that still run after a trigger (light analysis families, currently `GovDo
 
 - Symptom: machine suddenly powers off with no OS-level shutdown log → silicon thermal trip (~100C), not an OOM or driver crash.
 - First thing to check: `tail ~/.hermes/logs/thermal_power_monitor.log`.
-- Two concurrent Hermes sessions were the Aug-7 trigger; VeriSafe batches share that risk. Before any bulk job: run the precheck script, keep `VERISAFE_FFMPEG_THREADS=2`, avoid overlapping with other CPU-heavy Hermes work.
+- Two concurrent Hermes sessions were the Aug-7 trigger; Vishwas batches share that risk. Before any bulk job: run the precheck script, keep `VISHWAS_FFMPEG_THREADS=2`, avoid overlapping with other CPU-heavy Hermes work.
 
 ## 6. Measured model timings (this box, CPU-only)
 
@@ -85,8 +85,8 @@ Notes: thermal held at 37 °C (acpitz) throughout the AASIST smoke — no SLOW-t
 ## 7. End-to-end CLI re-measure — full current build (all learned stages live)
 
 Re-measured 2026-08-21 (Phase 5 Task A) with all three weight gates provisioned
-(AASIST + EFFORT + HAVIC real checkpoints), `VERISAFE_FFMPEG_THREADS=1`,
-sequential runs, via `scripts/run_verisafe.sh cli`. Fixture: fresh 4 s
+(AASIST + EFFORT + HAVIC real checkpoints), `VISHWAS_FFMPEG_THREADS=1`,
+sequential runs, via `scripts/run_vishwas.sh cli`. Fixture: fresh 4 s
 `testsrc`+`sine` clip (640×360 @ 8 fps, h264+AAC) — the earlier P1 fixture is
 purged by zero-retention design, so it was re-synthesized to the same recipe.
 
@@ -121,7 +121,7 @@ transforms is measured separately in
 
 Hardware/runtime change: migration to the new disk brought a GeForce RTX 5090
 Laptop GPU (24 GB, sm_120). Commit `5c80af7` added a device-resolution seam
-(`src/verisafe/device.py`: `VERISAFE_DEVICE` env > cuda-if-available > cpu);
+(`src/vishwas/device.py`: `VISHWAS_DEVICE` env > cuda-if-available > cpu);
 all learned-stage loads and inference now run on CUDA by default. Weights were
 re-downloaded fresh (AASIST 3.79 GB, HAVIC 859 MB); the fetcher's size-verify
 unit bug (MiB vs decimal MB) was fixed in `scripts/fetch_model_weights.sh`.
@@ -141,17 +141,17 @@ AASIST (audio), EFFORT chameleon (video/face, fetched 2026-08-24 via Drive API
 XLSR-Mamba-LA (audio 2nd opinion, MIT, replaces RawBMamba as Mamba-slot
 primary; label-order inversion bonafide=1 documented in its spec header X5).
 RawBMamba demoted to eval-grade ONNX fallback (no license). Webhook defaults to
-`VERISAFE_DEVICE=cpu` (risk-6: LLM serving shares the 5090); GPU is opt-in per
+`VISHWAS_DEVICE=cpu` (risk-6: LLM serving shares the 5090); GPU is opt-in per
 invocation and `/health` reports the resolved `device`.
 
 Notes:
 - Interpreter decision: docling-python's torch 2.13.0+cu130 initializes CUDA
   correctly on sm_120 (verified: device name + capability + matmul), so
-  `run_verisafe.sh` PYTHONPATH is unchanged; no vllm-env switch needed.
+  `run_vishwas.sh` PYTHONPATH is unchanged; no vllm-env switch needed.
 - The webhook systemd unit previously had NO weight-gate env at all (gates
   lived in ~/.bashrc, invisible to systemd — same failure class as the VT key).
-  Fixed durably: provision output inlined into `deploy/verisafe-secrets.env`.
-- New gate registered: `VERISAFE_XLSRMAMBA_WEIGHTS` (MIT, XLSR-Mamba-LA,
+  Fixed durably: provision output inlined into `deploy/vishwas-secrets.env`.
+- New gate registered: `VISHWAS_XLSRMAMBA_WEIGHTS` (MIT, XLSR-Mamba-LA,
   replaces RawBMamba as Mamba-slot primary once its arch module is vendored —
   separate commit cycle). RawBMamba demoted to eval-grade ONNX fallback.
 - EFFORT checkpoint pending (Google Drive quota window on the only public

@@ -17,12 +17,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from verisafe.events import Artifact, InputType, JobContext, Verdict
-from verisafe.fusion import FusionEngine, ReliabilityGate
-from verisafe.i18n import t
-from verisafe.report import ReportBuilder
-from verisafe.orchestrator import Orchestrator, _has_confirmed_danger
-from verisafe.capabilities.base import CheckResult
+from vishwas.events import Artifact, InputType, JobContext, Verdict
+from vishwas.fusion import FusionEngine, ReliabilityGate
+from vishwas.i18n import t
+from vishwas.report import ReportBuilder
+from vishwas.orchestrator import Orchestrator, _has_confirmed_danger
+from vishwas.capabilities.base import CheckResult
 
 
 # ------------------------------------------------------------ fakes --------
@@ -89,7 +89,7 @@ def clean_artifact(qroot):
 
 
 def make_artifact(job_dir: Path, filename: str, declared: InputType, data: bytes | None = None):
-    from verisafe.file_validator import make_artifact as _m
+    from vishwas.file_validator import make_artifact as _m
     return _m(job_dir, filename, declared, data=data)
 
 
@@ -235,7 +235,7 @@ def test_heavy_over_budget_ships_fast_with_pending_evidence(clean_artifact, qroo
 def test_followup_fires_within_cap_margin_en(tmp_path):
     slow = SlowLearnedCap(delay=1.5)
     orch = _make_orch2([slow], heavy_stage_budget_s=0.4)
-    from verisafe.channels import MessageProcessor
+    from vishwas.channels import MessageProcessor
     proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
                             workdir=tmp_path)
     t0 = time.monotonic()
@@ -254,7 +254,7 @@ def test_followup_fires_within_cap_margin_en(tmp_path):
 def test_followup_template_exact_hi(tmp_path):
     slow = SlowLearnedCap(delay=1.2)
     orch = _make_orch2([slow], heavy_stage_budget_s=0.3)
-    from verisafe.channels import MessageProcessor
+    from vishwas.channels import MessageProcessor
     proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
                             workdir=tmp_path)
     proc.process({"id": "sess-hi", "text": "यह जाँचो", "sender_lang": "hi"})
@@ -269,7 +269,7 @@ def test_followup_template_exact_hi(tmp_path):
 def test_session_ended_drops_followup_silently(tmp_path, capsys):
     slow = SlowLearnedCap(delay=1.2)
     orch = _make_orch2([slow], heavy_stage_budget_s=0.3)
-    from verisafe.channels import MessageProcessor
+    from vishwas.channels import MessageProcessor
     proc = MessageProcessor(orch, openwa=None, persist_outcomes=False,
                             workdir=tmp_path)
     proc.process({"id": "sess-dead", "text": "check this", "sender_lang": "en"})

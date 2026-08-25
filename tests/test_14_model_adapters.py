@@ -24,22 +24,22 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from verisafe import model_adapters as ma
-from verisafe.model_adapters import ADAPTERS, Adapter, compute_mel, resolve, run_check
-from verisafe.capabilities import deepfake_audio as daudio
-from verisafe.capabilities import deepfake_video as dvideo
-from verisafe.capabilities import image_facecheck as iface
-from verisafe.capabilities import cross_modal as xmod
+from vishwas import model_adapters as ma
+from vishwas.model_adapters import ADAPTERS, Adapter, compute_mel, resolve, run_check
+from vishwas.capabilities import deepfake_audio as daudio
+from vishwas.capabilities import deepfake_video as dvideo
+from vishwas.capabilities import image_facecheck as iface
+from vishwas.capabilities import cross_modal as xmod
 
 SEVEN_ENVS = [
-    "VERISAFE_EFFORT_WEIGHTS",
-    "VERISAFE_DEMAMBA_WEIGHTS",
-    "VERISAFE_FAKEMAMBA_WEIGHTS",
-    "VERISAFE_XLSRMAMBA_WEIGHTS",
-    "VERISAFE_AASIST_WEIGHTS",
-    "VERISAFE_SSL_AUDIO_WEIGHTS",
-    "VERISAFE_HAVIC_WEIGHTS",
-    "VERISAFE_IMAGE_FACE_WEIGHTS",
+    "VISHWAS_EFFORT_WEIGHTS",
+    "VISHWAS_DEMAMBA_WEIGHTS",
+    "VISHWAS_FAKEMAMBA_WEIGHTS",
+    "VISHWAS_XLSRMAMBA_WEIGHTS",
+    "VISHWAS_AASIST_WEIGHTS",
+    "VISHWAS_SSL_AUDIO_WEIGHTS",
+    "VISHWAS_HAVIC_WEIGHTS",
+    "VISHWAS_IMAGE_FACE_WEIGHTS",
 ]
 
 
@@ -72,14 +72,14 @@ def weights_file(tmp_path):
 # ------------------------------------------------------------------- a ----
 def test_resolve_all_seven_and_unknown():
     families = {
-        "VERISAFE_EFFORT_WEIGHTS": "image",
-        "VERISAFE_DEMAMBA_WEIGHTS": "video",
-        "VERISAFE_FAKEMAMBA_WEIGHTS": "audio",
-        "VERISAFE_XLSRMAMBA_WEIGHTS": "audio",
-        "VERISAFE_AASIST_WEIGHTS": "audio",
-        "VERISAFE_SSL_AUDIO_WEIGHTS": "audio",
-        "VERISAFE_HAVIC_WEIGHTS": "video",
-        "VERISAFE_IMAGE_FACE_WEIGHTS": "face",
+        "VISHWAS_EFFORT_WEIGHTS": "image",
+        "VISHWAS_DEMAMBA_WEIGHTS": "video",
+        "VISHWAS_FAKEMAMBA_WEIGHTS": "audio",
+        "VISHWAS_XLSRMAMBA_WEIGHTS": "audio",
+        "VISHWAS_AASIST_WEIGHTS": "audio",
+        "VISHWAS_SSL_AUDIO_WEIGHTS": "audio",
+        "VISHWAS_HAVIC_WEIGHTS": "video",
+        "VISHWAS_IMAGE_FACE_WEIGHTS": "face",
     }
     assert sorted(ADAPTERS.keys()) == sorted(SEVEN_ENVS)
     for env in SEVEN_ENVS:
@@ -88,7 +88,7 @@ def test_resolve_all_seven_and_unknown():
         assert ad.env_name == env
         assert ad.family == families[env]
         callable(ad.preprocess)
-    assert resolve("VERISAFE_DOES_NOT_EXIST_WEIGHTS") is None
+    assert resolve("VISHWAS_DOES_NOT_EXIST_WEIGHTS") is None
     assert resolve("") is None
 
 
@@ -99,7 +99,7 @@ def _adapter_with_loader(env: str, stub) -> Adapter:
 
 # ------------------------------------------------------------------- b ----
 def test_predict_list_score_passthrough(weights_file):
-    ad = _adapter_with_loader("VERISAFE_EFFORT_WEIGHTS", StubPredict([0.7]))
+    ad = _adapter_with_loader("VISHWAS_EFFORT_WEIGHTS", StubPredict([0.7]))
     status, signals, _notes = run_check(ad, weights_file, np.zeros((224, 224, 3), np.uint8))
     assert status == "ok"
     assert signals["prob_deepfake"] == 0.7
@@ -108,7 +108,7 @@ def test_predict_list_score_passthrough(weights_file):
 
 # ------------------------------------------------------------------- c ----
 def test_logit_sigmoid_normalization(weights_file):
-    ad = _adapter_with_loader("VERISAFE_FAKEMAMBA_WEIGHTS", StubPredict([2.5]))  # raw logit
+    ad = _adapter_with_loader("VISHWAS_FAKEMAMBA_WEIGHTS", StubPredict([2.5]))  # raw logit
     status, signals, _notes = run_check(ad, weights_file, np.zeros(16000, np.float32))
     assert status == "ok"
     p = signals["prob_deepfake"]
@@ -129,7 +129,7 @@ def test_auto_extract_scalar_and_array():
 
 # ------------------------------------------------------------------- d ----
 def test_raising_model_degraded_no_escape(weights_file):
-    ad = _adapter_with_loader("VERISAFE_AASIST_WEIGHTS", RaisingModel())
+    ad = _adapter_with_loader("VISHWAS_AASIST_WEIGHTS", RaisingModel())
     status, signals, notes = run_check(ad, weights_file, np.zeros(16000, np.float32))
     assert status in ("degraded", "failed")
     assert "ValueError" in signals.get("error_class", "")
@@ -150,13 +150,13 @@ def test_missing_path_loader_none_and_unavailable(tmp_path):
 def test_capability_loaders_return_none_without_env(monkeypatch):
     for env in SEVEN_ENVS:
         monkeypatch.delenv(env, raising=False)
-    assert dvideo._load_model("EffortFaceForensics", "VERISAFE_EFFORT_WEIGHTS") is None
-    assert daudio._load_weights("VERISAFE_AASIST_WEIGHTS") is None
+    assert dvideo._load_model("EffortFaceForensics", "VISHWAS_EFFORT_WEIGHTS") is None
+    assert daudio._load_weights("VISHWAS_AASIST_WEIGHTS") is None
     assert iface._load_model() is None
 
 
 def test_video_effort_unavailable_result_verbatim(monkeypatch):
-    monkeypatch.delenv("VERISAFE_EFFORT_WEIGHTS", raising=False)
+    monkeypatch.delenv("VISHWAS_EFFORT_WEIGHTS", raising=False)
     cap = dvideo.DeepfakeVideoCapability()
     res = cap._effort(types.SimpleNamespace(), [])
     assert len(res) == 1
@@ -165,11 +165,11 @@ def test_video_effort_unavailable_result_verbatim(monkeypatch):
     assert r.cost == "heavy"
     assert r.status == "unavailable"
     assert r.signals == {"missing_dependency": "model-weights"}
-    assert "EFFORT weights not provisioned (VERISAFE_EFFORT_WEIGHTS)" in r.notes
+    assert "EFFORT weights not provisioned (VISHWAS_EFFORT_WEIGHTS)" in r.notes
 
 
 def test_audio_ssl_unavailable_result_verbatim(monkeypatch, tmp_path):
-    monkeypatch.delenv("VERISAFE_SSL_AUDIO_WEIGHTS", raising=False)
+    monkeypatch.delenv("VISHWAS_SSL_AUDIO_WEIGHTS", raising=False)
     cap = daudio.DeepfakeAudioCapability()
     res = cap._ssl_detector(types.SimpleNamespace(), tmp_path / "aud.wav")
     assert res[0].name == "ssl_audio_detector"
@@ -179,13 +179,13 @@ def test_audio_ssl_unavailable_result_verbatim(monkeypatch, tmp_path):
 
 
 def test_audio_multicrop_unavailable_result_verbatim(monkeypatch, tmp_path):
-    monkeypatch.delenv("VERISAFE_AASIST_WEIGHTS", raising=False)
+    monkeypatch.delenv("VISHWAS_AASIST_WEIGHTS", raising=False)
     cap = daudio.DeepfakeAudioCapability()
     ctx = types.SimpleNamespace(quarantine_root=tmp_path)
-    res = cap._multi_crop("aasist", "VERISAFE_AASIST_WEIGHTS", 3, ctx)
+    res = cap._multi_crop("aasist", "VISHWAS_AASIST_WEIGHTS", 3, ctx)
     assert res[0].name == "aasist_detector"
     assert res[0].status == "unavailable"
-    assert "AASIST weights not provisioned (VERISAFE_AASIST_WEIGHTS); skipped" in res[0].notes
+    assert "AASIST weights not provisioned (VISHWAS_AASIST_WEIGHTS); skipped" in res[0].notes
 
 
 # ------------------------------------------------------------------- f ----
@@ -224,10 +224,10 @@ def test_multi_crop_aggregation_is_median(monkeypatch, tmp_path):
         daudio, "_crop_windows",
         lambda outdir, n=3, win_s=3.0: fake_crops[:n],
     )
-    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", str(tmp_path / "x"))
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", str(tmp_path / "x"))
     cap = daudio.DeepfakeAudioCapability()
     ctx = types.SimpleNamespace(quarantine_root=tmp_path)
-    res = cap._multi_crop("aasist", "VERISAFE_AASIST_WEIGHTS", 3, ctx)
+    res = cap._multi_crop("aasist", "VISHWAS_AASIST_WEIGHTS", 3, ctx)
     r = res[0]
     assert r.status == "ok"
     scores = [0.2, 0.8, 0.6]
@@ -252,17 +252,17 @@ def test_torch_absent_simulation_graceful(weights_file, monkeypatch):
         assert status == "unavailable"
         assert signals == {"missing_dependency": "model-weights"}
     # Legacy capability loaders must also degrade to None, never raise.
-    monkeypatch.setenv("VERISAFE_EFFORT_WEIGHTS", weights_file)
-    assert dvideo._load_model("EffortFaceForensics", "VERISAFE_EFFORT_WEIGHTS") is None
-    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", weights_file)
-    assert daudio._load_weights("VERISAFE_AASIST_WEIGHTS") is None
-    monkeypatch.setenv("VERISAFE_IMAGE_FACE_WEIGHTS", weights_file)
+    monkeypatch.setenv("VISHWAS_EFFORT_WEIGHTS", weights_file)
+    assert dvideo._load_model("EffortFaceForensics", "VISHWAS_EFFORT_WEIGHTS") is None
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", weights_file)
+    assert daudio._load_weights("VISHWAS_AASIST_WEIGHTS") is None
+    monkeypatch.setenv("VISHWAS_IMAGE_FACE_WEIGHTS", weights_file)
     assert iface._load_model() is None
 
 
 # ------------------------------------------------------- preprocessor sanity
 def test_image_preprocess_chw_normalized():
-    ad = resolve("VERISAFE_EFFORT_WEIGHTS")
+    ad = resolve("VISHWAS_EFFORT_WEIGHTS")
     img = (np.random.rand(480, 640, 3) * 255).astype(np.uint8)
     chw = ad.preprocess(img)
     assert chw.shape == (3, 224, 224)
@@ -272,7 +272,7 @@ def test_image_preprocess_chw_normalized():
 
 
 def test_face_preprocess_112_batch():
-    ad = resolve("VERISAFE_IMAGE_FACE_WEIGHTS")
+    ad = resolve("VISHWAS_IMAGE_FACE_WEIGHTS")
     crop = (np.random.rand(300, 300, 3) * 255).astype(np.uint8)
     batch = ad.preprocess(crop)
     assert batch.shape == (1, 3, 112, 112)
@@ -280,7 +280,7 @@ def test_face_preprocess_112_batch():
 
 
 def test_video_sequence_preprocess_batches_frames():
-    ad = resolve("VERISAFE_HAVIC_WEIGHTS")
+    ad = resolve("VISHWAS_HAVIC_WEIGHTS")
     frames = [(np.random.rand(240, 320, 3) * 255).astype(np.uint8) for _ in range(5)]
     seq = ad.preprocess(frames)
     assert seq.shape == (5, 3, 224, 224)
@@ -301,20 +301,20 @@ def test_state_dict_checkpoint_degrades_to_unavailable(weights_file, monkeypatch
     with open(sd_path, "wb") as f:
         pickle.dump(sd, f)
 
-    monkeypatch.setenv("VERISAFE_EFFORT_WEIGHTS", str(sd_path))
-    m = dvideo._load_model("EffortFaceForensics", "VERISAFE_EFFORT_WEIGHTS")
+    monkeypatch.setenv("VISHWAS_EFFORT_WEIGHTS", str(sd_path))
+    m = dvideo._load_model("EffortFaceForensics", "VISHWAS_EFFORT_WEIGHTS")
     assert m is None  # unusable payload -> treated as not provisioned
 
     # _infer must never raise even if handed the raw dict directly
-    ad = resolve("VERISAFE_EFFORT_WEIGHTS")
+    ad = resolve("VISHWAS_EFFORT_WEIGHTS")
     frame = np.random.rand(224, 224, 3).astype(np.uint8)
     p = dvideo._infer(ad, sd, frame)
     assert p is None
 
     # audio + face loaders apply the same gate
-    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", str(sd_path))
-    assert daudio._load_weights("VERISAFE_AASIST_WEIGHTS") is None
-    monkeypatch.setenv("VERISAFE_IMAGE_FACE_WEIGHTS", str(sd_path))
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", str(sd_path))
+    assert daudio._load_weights("VISHWAS_AASIST_WEIGHTS") is None
+    monkeypatch.setenv("VISHWAS_IMAGE_FACE_WEIGHTS", str(sd_path))
     assert iface._load_model() is None
 
 
@@ -354,7 +354,7 @@ class FakeTinyModel:
         return types.SimpleNamespace(missing=list(missing), unexpected_keys=list(set(sd) - set(self.state)))
 
 
-def _make_fake_arch(name="aasist", weight_env="VERISAFE_AASIST_WEIGHTS",
+def _make_fake_arch(name="aasist", weight_env="VISHWAS_AASIST_WEIGHTS",
                     apply_ok=True, score_val=0.7):
     """A tiny ArchSpec subclass satisfying the 1.1 contract (no real net)."""
 
@@ -379,9 +379,9 @@ def _make_fake_arch(name="aasist", weight_env="VERISAFE_AASIST_WEIGHTS",
 
 def test_archspec_contract_defaults():
     """Base class documents name/weight_env slots and typed unimplemented error."""
-    spec = ma.ArchSpec(name="demo", weight_env="VERISAFE_DEMO_WEIGHTS")
+    spec = ma.ArchSpec(name="demo", weight_env="VISHWAS_DEMO_WEIGHTS")
     assert spec.name == "demo"
-    assert spec.weight_env == "VERISAFE_DEMO_WEIGHTS"
+    assert spec.weight_env == "VISHWAS_DEMO_WEIGHTS"
     with pytest.raises(ma.ArchNotImplementedError):
         spec.build()
     assert isinstance(ma.ArchNotImplementedError, type)
@@ -389,7 +389,7 @@ def test_archspec_contract_defaults():
 
 
 def test_get_arch_lazy_registry(monkeypatch):
-    from verisafe.model_archs import get_arch
+    from vishwas.model_archs import get_arch
 
     try:
         import torch.nn  # noqa: F401
@@ -403,7 +403,7 @@ def test_get_arch_lazy_registry(monkeypatch):
     # raises ArchNotImplementedError (honest degradation, never half-load).
     havic = get_arch("havic")
     assert isinstance(havic, ma.ArchSpec)
-    assert havic.name == "havic" and havic.weight_env == "VERISAFE_HAVIC_WEIGHTS"
+    assert havic.name == "havic" and havic.weight_env == "VISHWAS_HAVIC_WEIGHTS"
     assert getattr(havic, "implemented", False) is True
     assert havic.build.__func__ is not ma.ArchSpec.build
     if not _real_torch:
@@ -414,8 +414,8 @@ def test_get_arch_lazy_registry(monkeypatch):
     # the specs resolve with implemented=True; under the hermetic stub-torch
     # tree the module import fails (no torch.nn) and the registry honestly
     # degrades to None.
-    for fam, env in (("aasist", "VERISAFE_AASIST_WEIGHTS"),
-                     ("effort", "VERISAFE_EFFORT_WEIGHTS")):
+    for fam, env in (("aasist", "VISHWAS_AASIST_WEIGHTS"),
+                     ("effort", "VISHWAS_EFFORT_WEIGHTS")):
         got = get_arch(fam)
         if _real_torch:
             assert isinstance(got, ma.ArchSpec)
@@ -435,11 +435,11 @@ def test_env_unset_loader_returns_none(tmp_path, monkeypatch):
     """(a) env var unset -> None: seam short-circuits before any load (behavior unchanged)."""
     p = tmp_path / "x.pth"
     p.write_bytes(b"stub")
-    for e in ("VERISAFE_AASIST_WEIGHTS", "VERISAFE_EFFORT_WEIGHTS", "VERISAFE_HAVIC_WEIGHTS"):
+    for e in ("VISHWAS_AASIST_WEIGHTS", "VISHWAS_EFFORT_WEIGHTS", "VISHWAS_HAVIC_WEIGHTS"):
         monkeypatch.delenv(e, raising=False)
-    assert ma._arch_aware_load(str(p), "aasist", env_name="VERISAFE_AASIST_WEIGHTS") is None
-    assert ma._arch_aware_load(str(p), "effort", env_name="VERISAFE_EFFORT_WEIGHTS") is None
-    assert ma._arch_aware_load(str(p), "havic", env_name="VERISAFE_HAVIC_WEIGHTS") is None
+    assert ma._arch_aware_load(str(p), "aasist", env_name="VISHWAS_AASIST_WEIGHTS") is None
+    assert ma._arch_aware_load(str(p), "effort", env_name="VISHWAS_EFFORT_WEIGHTS") is None
+    assert ma._arch_aware_load(str(p), "havic", env_name="VISHWAS_HAVIC_WEIGHTS") is None
 
 
 def test_arch_ready_wrapper_returns_callable_score(weights_file, monkeypatch):
@@ -448,14 +448,14 @@ def test_arch_ready_wrapper_returns_callable_score(weights_file, monkeypatch):
     Mirrors what existing passing tests assert: run_check yields status 'ok'
     with signals['prob_deepfake'] == the calibrated score.
     """
-    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", weights_file)
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", weights_file)
     fake_sd = {"p0": np.zeros(2, dtype=np.float32), "p1": np.ones(1, dtype=np.float32)}
     loader = lambda path: ma._arch_aware_load(
-        path, "aasist", env_name="VERISAFE_AASIST_WEIGHTS",
+        path, "aasist", env_name="VISHWAS_AASIST_WEIGHTS",
         raw_load=lambda p: fake_sd,
         arch=_make_fake_arch(apply_ok=True, score_val=0.7),
     )
-    ad = replace(resolve("VERISAFE_AASIST_WEIGHTS"), _load=loader)
+    ad = replace(resolve("VISHWAS_AASIST_WEIGHTS"), _load=loader)
     m = ad.load(weights_file)
     assert m is not None
     # READY callable: duck-typing via .score AND .predict so _call_model works
@@ -471,44 +471,44 @@ def test_arch_ready_wrapper_returns_callable_score(weights_file, monkeypatch):
 def test_arch_unavailable_reason_and_no_half_load(weights_file, monkeypatch):
     """(c) env set but arch unavailable (None) OR apply_state False -> None + reason."""
     # (c-i) get_arch returns None
-    monkeypatch.setenv("VERISAFE_EFFORT_WEIGHTS", weights_file)
+    monkeypatch.setenv("VISHWAS_EFFORT_WEIGHTS", weights_file)
     loader_none = lambda path: ma._arch_aware_load(
-        path, "effort", env_name="VERISAFE_EFFORT_WEIGHTS",
+        path, "effort", env_name="VISHWAS_EFFORT_WEIGHTS",
         raw_load=lambda p: {"k": 1},
         arch=None,
     )
-    ad = replace(resolve("VERISAFE_EFFORT_WEIGHTS"), _load=loader_none)
+    ad = replace(resolve("VISHWAS_EFFORT_WEIGHTS"), _load=loader_none)
     assert ad.load(weights_file) is None
     assert ad.last_reason == "weight file loaded but architecture unavailable"
 
     # (c-ii) arch present but apply_state False (coverage below threshold)
     loader_bad = lambda path: ma._arch_aware_load(
-        path, "effort", env_name="VERISAFE_EFFORT_WEIGHTS",
+        path, "effort", env_name="VISHWAS_EFFORT_WEIGHTS",
         raw_load=lambda p: {"unrelated_key_only": np.zeros(3)},
         arch=_make_fake_arch(name="effort", apply_ok=True, score_val=0.1),
     )
-    ad2 = replace(resolve("VERISAFE_EFFORT_WEIGHTS"), _load=loader_bad)
+    ad2 = replace(resolve("VISHWAS_EFFORT_WEIGHTS"), _load=loader_bad)
     assert ad2.load(weights_file) is None
     assert ad2.last_reason == "weight file loaded but architecture unavailable"
 
     # (c-iii) arch not yet implemented (stub) -> same honest reason, never half-load
-    monkeypatch.delenv("VERISAFE_HAVIC_WEIGHTS", raising=False)
-    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", weights_file)
+    monkeypatch.delenv("VISHWAS_HAVIC_WEIGHTS", raising=False)
+    monkeypatch.setenv("VISHWAS_HAVIC_WEIGHTS", weights_file)
     loader_stub = lambda path: ma._arch_aware_load(
-        path, "havic", env_name="VERISAFE_HAVIC_WEIGHTS",
+        path, "havic", env_name="VISHWAS_HAVIC_WEIGHTS",
         raw_load=lambda p: {"k": 1},
     )
-    ad3 = replace(resolve("VERISAFE_HAVIC_WEIGHTS"), _load=loader_stub)
+    ad3 = replace(resolve("VISHWAS_HAVIC_WEIGHTS"), _load=loader_stub)
     assert ad3.load(weights_file) is None
     assert ad3.last_reason == "weight file loaded but architecture unavailable"
 
 
 def test_is_usable_model_wrapper_vs_raw_statedict(weights_file, monkeypatch):
     """(iv) is_usable_model(True) on the arch wrapper vs (False) on raw state-dict."""
-    monkeypatch.setenv("VERISAFE_AASIST_WEIGHTS", weights_file)
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", weights_file)
     fake_sd = {"p0": np.zeros(2), "p1": np.ones(1)}
     m = ma._arch_aware_load(
-        weights_file, "aasist", env_name="VERISAFE_AASIST_WEIGHTS",
+        weights_file, "aasist", env_name="VISHWAS_AASIST_WEIGHTS",
         raw_load=lambda p: fake_sd,
         arch=_make_fake_arch(apply_ok=True, score_val=0.3),
     )
@@ -535,7 +535,7 @@ class RaisingHavicWrapper:
 
 
 def _havic_env_unset(monkeypatch):
-    monkeypatch.delenv("VERISAFE_HAVIC_WEIGHTS", raising=False)
+    monkeypatch.delenv("VISHWAS_HAVIC_WEIGHTS", raising=False)
 
 
 def test_havic_load_none_when_env_unset(monkeypatch):
@@ -545,7 +545,7 @@ def test_havic_load_none_when_env_unset(monkeypatch):
 
 
 def test_havic_load_none_when_path_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", str(tmp_path / "absent.pth"))
+    monkeypatch.setenv("VISHWAS_HAVIC_WEIGHTS", str(tmp_path / "absent.pth"))
     assert xmod._load_havic() is None
 
 
@@ -572,10 +572,10 @@ def test_havic_registry_routes_through_arch_seam(weights_file, monkeypatch):
         # fails before arch logic and the reason assertion below is skipped.
         with open(sd_path, "wb") as f:
             pickle.dump(sd, f)
-    monkeypatch.setenv("VERISAFE_HAVIC_WEIGHTS", str(sd_path))
+    monkeypatch.setenv("VISHWAS_HAVIC_WEIGHTS", str(sd_path))
     assert xmod._load_havic() is None  # unusable in BOTH trees, never a dict
     if _real_torch:
-        ad = resolve("VERISAFE_HAVIC_WEIGHTS")
+        ad = resolve("VISHWAS_HAVIC_WEIGHTS")
         assert ad.last_reason == ma.ARCH_UNAVAILABLE_REASON
 
 
@@ -586,7 +586,7 @@ def test_havic_check_unavailable_shape(tmp_path):
     assert r.cost == "heavy"
     assert r.status == "unavailable"
     assert r.signals == {"missing_dependency": "model-weights"}
-    assert "HAVIC weights not provisioned (VERISAFE_HAVIC_WEIGHTS)" in r.notes
+    assert "HAVIC weights not provisioned (VISHWAS_HAVIC_WEIGHTS)" in r.notes
 
 
 def test_havic_check_ok_shape_with_fake_adapter(monkeypatch, tmp_path):

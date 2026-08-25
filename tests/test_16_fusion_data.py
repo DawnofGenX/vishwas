@@ -2,7 +2,7 @@
 
 All data is synthetic (numpy, fixed seeds) or operator JSONL under tmp_path —
 zero network. Exercises the real on-disk checkpoint contract that
-FusionEngine.load_trained() consumes ($VERISAFE_FUSION_DIR/training/
+FusionEngine.load_trained() consumes ($VISHWAS_FUSION_DIR/training/
 stack_<target>.json), plus the CLI entry points of fusion_train.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _url_pairs():
     """Ordered (check_name, signal_key) pairs for the six url_phishing
     weighted signals — the exact source mapping FusionEngine.feature_vector
     consumes."""
-    from verisafe.fusion import WEIGHTS, _SIGNAL_SOURCES
+    from vishwas.fusion import WEIGHTS, _SIGNAL_SOURCES
     out = []
     for sk in WEIGHTS["url_phishing"]:
         cname, sfield, _, _ = _SIGNAL_SOURCES[sk]
@@ -45,7 +45,7 @@ def _checks_from_values(values_by_signal_field: dict[str, float]):
     """Build usable CheckResults whose signals feed feature_vector like
     serve-time checks do (one CheckResult per unique check name; multiple
     signal fields fold into its signals dict)."""
-    from verisafe.capabilities.base import CheckResult
+    from vishwas.capabilities.base import CheckResult
     grouped: dict[str, dict[str, object]] = {}
     order: list[tuple[str, str]] = []
     for cname, sfield in _url_pairs():
@@ -64,7 +64,7 @@ _NFEAT = len(_url_pairs()) * 2          # value+gap flag per signal == 12
 
 # ------------------------------------------------------------------- a -------
 def test_a_synthesize_shapes_types_balance(np):
-    from verisafe.dataset_collector import synthesize
+    from vishwas.dataset_collector import synthesize
     X, y = synthesize(1000, 12, seed=7)
     assert X.shape == (1000, 12)
     assert X.dtype == np.float32
@@ -77,7 +77,7 @@ def test_a_synthesize_shapes_types_balance(np):
 
 # ------------------------------------------------------------------- b -------
 def test_b_split_stratified_disjoint_sizes(np):
-    from verisafe.dataset_collector import synthesize, split
+    from vishwas.dataset_collector import synthesize, split
     X, y = synthesize(200, 8, seed=1)
     Xtr, ytr, Xte, yte = split(X, y, test_frac=0.25, seed=3)
     frac_te = len(yte) / 200
@@ -95,8 +95,8 @@ def test_b_split_stratified_disjoint_sizes(np):
 # ------------------------------------------------------------------- c -------
 def test_c_tiny_lr_beats_baseline_under_budget(np):
     t0 = time.monotonic()
-    from verisafe.dataset_collector import synthesize, split
-    from verisafe.fusion_train import _fit_logistic_np
+    from vishwas.dataset_collector import synthesize, split
+    from vishwas.fusion_train import _fit_logistic_np
     X, y = synthesize(1500, 15, seed=0)
     Xtr, ytr, Xte, yte = split(X, y, test_frac=0.2, seed=0)
     w, b = _fit_logistic_np(Xtr, ytr, seed=0)
@@ -110,7 +110,7 @@ def test_c_tiny_lr_beats_baseline_under_budget(np):
 
 # ------------------------------------------------------------------- d -------
 def test_d_jsonl_roundtrip(tmp_path, np):
-    from verisafe import dataset_collector as dc
+    from vishwas import dataset_collector as dc
     X, y = dc.synthesize(500, 10, seed=5)
     p = tmp_path / "corpus.jsonl"
     dc.save_jsonl(X, y, p)
@@ -128,9 +128,9 @@ def test_d_jsonl_roundtrip(tmp_path, np):
 
 # ------------------------------------------------------------------- e -------
 def test_e_checkpoint_roundtrip_via_engine(tmp_path, np):
-    from verisafe import dataset_collector as dc
-    from verisafe.fusion import FusionEngine
-    from verisafe.fusion_train import train_target_checkpoint
+    from vishwas import dataset_collector as dc
+    from vishwas.fusion import FusionEngine
+    from vishwas.fusion_train import train_target_checkpoint
 
     X, y = dc.synthesize(1500, _NFEAT, seed=11)
     Xtr, ytr = dc.split(X, y, test_frac=0.2, seed=11)[:2]
@@ -165,8 +165,8 @@ def test_e_checkpoint_roundtrip_via_engine(tmp_path, np):
 # ------------------------------------------------------------------- f -------
 def _cli(args, tmp_path):
     env = dict(os.environ)
-    env["VERISAFE_FUSION_DIR"] = str(tmp_path / "fdir")
-    r = subprocess.run([_py(), "-m", "verisafe.fusion_train", *args],
+    env["VISHWAS_FUSION_DIR"] = str(tmp_path / "fdir")
+    r = subprocess.run([_py(), "-m", "vishwas.fusion_train", *args],
                        capture_output=True, text=True, env=env, cwd=str(ROOT))
     return r, env
 
@@ -194,6 +194,6 @@ def test_cli_synthetic_end_to_end(tmp_path):
     assert r.returncode == 0, f"cli failed: {r.stderr or r.stdout}"
     last = json.loads(r.stdout.strip().splitlines()[-1])
     assert last["ok"] is True
-    ck = Path(env["VERISAFE_FUSION_DIR"]) / "training" / "stack_malicious_file.json"
+    ck = Path(env["VISHWAS_FUSION_DIR"]) / "training" / "stack_malicious_file.json"
     assert ck.is_file()
     assert last["test_accuracy"] > 0.85

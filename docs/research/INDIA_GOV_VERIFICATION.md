@@ -21,7 +21,7 @@
 
 **What it actually offers (public knowledge, consistent with the site):** citizens share documents by generating a time-limited verification link/QR; third parties *view or verify* through DigiLocker's own UI, where DigiLocker holds the issuing authority's original (e-KYC for Aadhaar, certificates for others). The e-KYC spec (DigiLocker ↔ UIDAI) is documented publicly (`digilocker.gov.in` partner docs), but access is **contract/partnership-gated**: you must be an authorized service provider (DLP/verifier registration with MoHA/UIDAI), get OAuth2/OIDC credentials issued, and pass a due-diligence process. There is **no anonymous self-serve key** like API Setu has for its directory search.
 
-**Implication for VeriSafe:** do NOT build direct DigiLocker calls into the default pipeline. Two viable shapes when a user *has* a DigiLocker QR/link: (a) treat the QR payload as a DigiLocker verification URL → hand the user a plain-language instruction ("open this in your phone's DigiLocker app / verify with your OTP"), i.e. **user-assisted verification**; (b) if VeriSafe later gets partner credentials, a gated capability `digilocker_verify(qr_or_link)` using the published e-KYC flow (OAuth token grant, DigiLocker's JSON eKYC response). Until then: **NO-PUBLIC-API**.
+**Implication for Vishwas:** do NOT build direct DigiLocker calls into the default pipeline. Two viable shapes when a user *has* a DigiLocker QR/link: (a) treat the QR payload as a DigiLocker verification URL → hand the user a plain-language instruction ("open this in your phone's DigiLocker app / verify with your OTP"), i.e. **user-assisted verification**; (b) if Vishwas later gets partner credentials, a gated capability `digilocker_verify(qr_or_link)` using the published e-KYC flow (OAuth token grant, DigiLocker's JSON eKYC response). Until then: **NO-PUBLIC-API**.
 
 ## 2. API Setu / India.gov.in open-data portal
 
@@ -31,7 +31,7 @@ The platform has been **re-homed since pre-2024 docs**: `apisetu.api.gov.in` and
 
 ```
 apisetu.gov.in            portal + developer/SOP/marketing pages (Next.js SSR)
-directory.apisetu.gov.in  searchable catalog  ← the one VeriSafe needs for discovery
+directory.apisetu.gov.in  searchable catalog  ← the one Vishwas needs for discovery
 docs.apisetu.gov.in       Mintlify docs ("document-central", explore-apisetu, SOP for API Access)
 partners.apisetu.gov.in   consumer/partner signup
 ```
@@ -53,7 +53,7 @@ Two families appear in the results:
 
 **Consumer auth model** (from the SOP-for-API-Access doc on docs.apisetu.gov.in — page present but body JS-rendered; corroborated by the directory's `gateway_firewall` flag): register at partners.apisetu.gov.in → get an **OAuth2 client credentials pair** (client_id/secret) → sign requests to the respective `<subdomain>.apisetugateway.in` / `gateway.apisetu.gov.in` endpoints. Rate limits are negotiated per consumer (not published as fixed numbers). Data license: government-published datasets follow India.gov.in data policies; **personal KYC data returned by these APIs may only be processed under the consuming entity's legal authorization and the user's consent** — a WhatsApp-based product must keep the zero-retention + consent posture or it will violate those ToS.
 
-**Best-practice integration pattern for VeriSafe:** use the **read-only discovery surface only** (token → `/api/list?q={"query": …}`) to maintain a versioned cache of *which document types exist, which issuers serve them, and their spec codes*. Never call the e-KYC endpoints anonymously; they'll fail or misbehave without a registered consumer + user-initiated consent. This makes the discovery API our **RAG template-cache refresher** (see §7).
+**Best-practice integration pattern for Vishwas:** use the **read-only discovery surface only** (token → `/api/list?q={"query": …}`) to maintain a versioned cache of *which document types exist, which issuers serve them, and their spec codes*. Never call the e-KYC endpoints anonymously; they'll fail or misbehave without a registered consumer + user-initiated consent. This makes the discovery API our **RAG template-cache refresher** (see §7).
 
 ## 3. Docling (`docling-project/docling`)
 
@@ -61,8 +61,8 @@ Two families appear in the results:
 
 Re-verified today from PyPI + GitHub APIs:
 - Latest **v2.120.3**, `requires_python >=3.10,<4.0`. **MIT** (GitHub repo `docling-project/docling`, LICENSE first line "MIT License"; PyPI `license` field blank — GitHub is the truth here). ★≈65k, pushed daily.
-- Install footprint: wheel ~3 MB, but with `docling[full]` (layout models + RapidOCR ONNX) the isolated dir we run lands at **~5.5 GB** — that's why VeriSafe runs it from `/home/hermes/docling-python` with an explicit `PYTHONPATH` gate rather than polluting site-packages. First convert ≈22–34 s (model load), cached after (~1–2 s per page).
-- Extraction path used by VeriSafe: `DocumentConverter().convert(input=DocumentStream(name=…, stream=BytesIO(bytes)))` → `.document.export_to_markdown()` (**str**) — see `gov_document.py` step 1b. Tables render as markdown tables; forms are read as structured layout blocks inside the Document object (JSON export available via `.export_to_dict()` if we ever want machine-checked field boxes).
+- Install footprint: wheel ~3 MB, but with `docling[full]` (layout models + RapidOCR ONNX) the isolated dir we run lands at **~5.5 GB** — that's why Vishwas runs it from `/home/hermes/docling-python` with an explicit `PYTHONPATH` gate rather than polluting site-packages. First convert ≈22–34 s (model load), cached after (~1–2 s per page).
+- Extraction path used by Vishwas: `DocumentConverter().convert(input=DocumentStream(name=…, stream=BytesIO(bytes)))` → `.document.export_to_markdown()` (**str**) — see `gov_document.py` step 1b. Tables render as markdown tables; forms are read as structured layout blocks inside the Document object (JSON export available via `.export_to_dict()` if we ever want machine-checked field boxes).
 - **OCR bundled:** `rapidocr-onnxruntime` (the `easyocr`/`tesseract` backends are optional extras; tesseract remains our separate branch-3 fallback for scanned images outside docling's success path).
 - **QR hints on scanned certificates:** docling can rasterize embedded images but does **not** decode QR itself — QR decoding stays in our planned cv2/zbar branch (item 4). No conflict: same raster, two consumers.
 
@@ -90,7 +90,7 @@ Formats observed in the wild: mostly **UTF-8 text (plain or JSON)**, occasionall
   - **`pyhanko`** (MIT, pure python, ≥3.9) — the single most useful tool here: it *reads* PAdES/AdES signatures, validates signing-time policy, exposes timestamp tokens (RFC 3161), and even signs. Its `pyhanko.pdf_utils.signature.SignatureField` + `validate` machinery maps directly onto "is this govt PDF genuinely signed by the claimed authority".
   - **`cryptography`** (Rust-backed, tiny) → ECDSA/RSA signature verify + chain building once asn1crypto has handed us certs. For CAs: bundle the relevant government root CAs in a versioned trust store (e.g. IndiaSign/Meghna, Sify, T-Systems roots + per-ministry CA certs) — **trust-store-as-data, versioned, in-repo**.
 - **GnuPG is the wrong tool** (OpenPGP ≠ CMS/PKCS#7); the old plan is retired.
-- **VeriSafe mapping:** new optional stage in `gov_document.py` ladder *after* extraction: `signature_check(pdf_bytes)` → CheckResult {signed: bool, valid_chain: bool?, signer_cn, signature_type(PAdES-B/L/ES), error}. Weight it strongly but not decisively (many legit state certificates are unsigned/scanned — absence ≠ fraud).
+- **Vishwas mapping:** new optional stage in `gov_document.py` ladder *after* extraction: `signature_check(pdf_bytes)` → CheckResult {signed: bool, valid_chain: bool?, signer_cn, signature_type(PAdES-B/L/ES), error}. Weight it strongly but not decisively (many legit state certificates are unsigned/scanned — absence ≠ fraud).
 
 ## 6. Playwright headless vs .gov.in anti-bot (observed today)
 
@@ -109,7 +109,7 @@ Formats observed in the wild: mostly **UTF-8 text (plain or JSON)**, occasionall
 
 ## 7. Implications for offline fallback design (authoritative API unavailable → what to cache)
 
-When DigiLocker/e-KYC consumer access is absent (our baseline case), VeriSafe runs **controlled browser + versioned RAG template cache**. The cache is a *retrieval aid*, never a source of truth (architectural invariant). Contents to version:
+When DigiLocker/e-KYC consumer access is absent (our baseline case), Vishwas runs **controlled browser + versioned RAG template cache**. The cache is a *retrieval aid*, never a source of truth (architectural invariant). Contents to version:
 
 1. **Document-template fingerprints** (per doc class): expected field inventory + label variants (EN/HI + common states' language), layout zones (header logos, QR position box, serial patterns), watermarks/security-feature descriptions. Sources: official specimen PDFs from ministry sites (fetch once, hash, store), plus API Setu catalog metadata (doc types per issuer — from the digest above).
 2. **Issuer-trust data**: `issuerId` → orgName/type/state, official domain(s), logo hashes, known QR scheme per doc class (item 4 table). Source: API Setu discovery API (refresh cadence: monthly, ~20 calls).

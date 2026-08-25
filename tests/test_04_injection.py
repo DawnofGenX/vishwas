@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from verisafe.llm_guard import sanitize_user_input, build_interpretation_prompt, UNTRUSTED_WRAP
+from vishwas.llm_guard import sanitize_user_input, build_interpretation_prompt, UNTRUSTED_WRAP
 
 
 # ------------------------------------------------------------ sanitiser ------

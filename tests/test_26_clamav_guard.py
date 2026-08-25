@@ -2,7 +2,7 @@
 
 Finding B (ZERO_RETENTION_E2E_2026-08-21.md): the availability guard called
 os.access("clamscan", os.X_OK) on a BARE name, which is cwd-relative and
-therefore always False unless VERISAFE_CLAMSCAN_BIN pointed at an absolute
+therefore always False unless VISHWAS_CLAMSCAN_BIN pointed at an absolute
 path -> ClamAV silently reported 'unavailable' even when installed with a
 fresh DB. Fixed in f9eea84 (shutil.which resolution + corrected rc semantics:
 'FOUND' in output is the detection signal; rc==2 is an error, NOT a hit).
@@ -15,8 +15,8 @@ import stat
 
 import pytest
 
-from verisafe.capabilities.malware_file import MaliciousFileCapability
-from verisafe.events import Artifact, InputType, JobContext
+from vishwas.capabilities.malware_file import MaliciousFileCapability
+from vishwas.events import Artifact, InputType, JobContext
 
 EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
@@ -63,8 +63,8 @@ def guarded_env(monkeypatch, tmp_path):
     qroot = tmp_path / "q"
     qroot.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
-    monkeypatch.setenv("VERISAFE_CLAMD_DB", str(db_dir))
-    monkeypatch.delenv("VERISAFE_CLAMSCAN_BIN", raising=False)
+    monkeypatch.setenv("VISHWAS_CLAMD_DB", str(db_dir))
+    monkeypatch.delenv("VISHWAS_CLAMSCAN_BIN", raising=False)
     return bin_dir, db_dir, qroot
 
 
@@ -120,10 +120,10 @@ def test_clamav_honest_unavailable_when_binary_missing(guarded_env, tmp_path):
 
 
 def test_clamav_absolute_bin_override_still_honoured(guarded_env, tmp_path, monkeypatch):
-    """VERISAFE_CLAMSCAN_BIN with an absolute path bypasses PATH lookup."""
+    """VISHWAS_CLAMSCAN_BIN with an absolute path bypasses PATH lookup."""
     bin_dir, _db, qroot = guarded_env
     alt = _write_executable(tmp_path / "alt-clamscan", FAKE_CLAMSCAN)
-    monkeypatch.setenv("VERISAFE_CLAMSCAN_BIN", str(alt))
+    monkeypatch.setenv("VISHWAS_CLAMSCAN_BIN", str(alt))
     assert os.access(str(alt), os.X_OK)
     del bin_dir
     res = MaliciousFileCapability()._clamav(_artifact(tmp_path), _ctx(None, qroot))[0]

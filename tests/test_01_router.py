@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from verisafe.router import Router
-from verisafe.events import InputType
+from vishwas.router import Router
+from vishwas.events import InputType
 
 
 R = Router()
@@ -74,7 +74,7 @@ def test_disguised_media_is_re_routed_by_magic_bytes():
     # comes from target_for(art) after validation; here we simulate the art.
     class Art:
         verified_kind = None
-    from verisafe.events import MediaKind
+    from vishwas.events import MediaKind
     d = _classify({"media_path": "video.mp4", "input_type": "video"})
     art = Art(); art.verified_kind = MediaKind.PE
     assert R.target_for(d, art) == "malicious_file"

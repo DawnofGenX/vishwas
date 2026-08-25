@@ -1,6 +1,6 @@
-"""Shared pytest config for VeriSafe.
+"""Shared pytest config for Vishwas.
 
-Sets hermetic quarantine/audit paths BEFORE any verisafe module is imported
+Sets hermetic quarantine/audit paths BEFORE any vishwas module is imported
 (quarantine.py reads env at import time), adds src/ to sys.path, and provides
 fixtures for building a fully-gated-off orchestrator (no heavy deps -> cheap
 deterministic behaviour, no network, no weights).
@@ -12,10 +12,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
 
-# --- hermetic isolation (must happen before importing verisafe.*) ----------
-os.environ.setdefault("VERISAFE_QUARANTINE", str(_ROOT / ".test-quarantine"))
-os.environ.setdefault("VERISAFE_AUDIT_LOG", str(_ROOT / ".test-quarantine" / "audit.log"))
-os.environ.setdefault("VERISAFE_STALE_TTL_S", "7200")
+# --- hermetic isolation (must happen before importing vishwas.*) ----------
+os.environ.setdefault("VISHWAS_QUARANTINE", str(_ROOT / ".test-quarantine"))
+os.environ.setdefault("VISHWAS_AUDIT_LOG", str(_ROOT / ".test-quarantine" / "audit.log"))
+os.environ.setdefault("VISHWAS_STALE_TTL_S", "7200")
 sys.path.insert(0, str(_ROOT / "src"))
 
 # Local dependency library (trimmed asn1crypto for the PAdES/CMS stage).
@@ -40,7 +40,7 @@ def qroot(tmp_path):
 @pytest.fixture
 def orchestrator(qroot):
     """Fully gated-off orchestrator: cheap tiers only, deterministic, offline."""
-    import verisafe.app as app
+    import vishwas.app as app
     orch = app.build_orchestrator(set())   # empty dep set => only cheap checks run
     return orch
 
@@ -48,7 +48,7 @@ def orchestrator(qroot):
 @pytest.fixture
 def orch_with_deps(qroot):
     """Orchestrator with lightweight deps enabled (vt/browser off by default)."""
-    import verisafe.app as app
+    import vishwas.app as app
     orch = app.build_orchestrator(set())
     return orch
 

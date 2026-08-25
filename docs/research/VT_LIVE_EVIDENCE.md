@@ -1,8 +1,8 @@
 # VirusTotal Live Evidence — 2026-08-21 (roadmap Task 4.1 unblocked)
 
-Operator provisioned `VERISAFE_VT_API_KEY` (stored in `~/.bashrc`, never
+Operator provisioned `VISHWAS_VT_API_KEY` (stored in `~/.bashrc`, never
 committed). Live probe executed against the production API with BOTH the raw
-API (curl) and the project's own client (`src/verisafe/vt_client.py`).
+API (curl) and the project's own client (`src/vishwas/vt_client.py`).
 
 ## Raw API results (curl, /api/v3)
 

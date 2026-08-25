@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from verisafe import gpg_check
-from verisafe.capabilities import gov_document as gd
-from verisafe.events import Artifact, InputType, JobContext, MediaKind
+from vishwas import gpg_check
+from vishwas.capabilities import gov_document as gd
+from vishwas.events import Artifact, InputType, JobContext, MediaKind
 
 pytestmark = pytest.mark.skipif(
     not gpg_check.available(), reason="gpg binary not available")
@@ -41,7 +41,7 @@ def _gen_key(home: Path, name: str, email: str) -> str:
     params.write_text(
         "Key-Type: RSA\nKey-Length: 1024\nSubkey-Type: RSA\nSubkey-Length: 1024\n"
         f"Name-Real: {name}\nName-Email: {email}\nExpire-Date: 0\n"
-        "Passphrase: verisafetest\n%commit\n")
+        "Passphrase: vishwastest\n%commit\n")
     p = subprocess.run(["gpg", "--homedir", str(home), "--batch", "--no-tty",
                         "--pinentry-mode", "loopback", "--gen-key", str(params)],
                        capture_output=True, text=True, timeout=300)
@@ -66,7 +66,7 @@ def _sign(home: Path, data: bytes, out_sig: Path) -> None:
     datafile.write_bytes(data)
     p = subprocess.run(["gpg", "--homedir", str(home), "--batch", "--yes",
                         "--no-tty", "--pinentry-mode", "loopback", "--passphrase",
-                        "verisafetest", "--detach-sign", "--output", str(out_sig),
+                        "vishwastest", "--detach-sign", "--output", str(out_sig),
                         str(datafile)],
                        capture_output=True, text=True, timeout=300)
     assert p.returncode == 0, p.stderr
@@ -77,7 +77,7 @@ def _sign(home: Path, data: bytes, out_sig: Path) -> None:
 def keys():
     """Two throwaway keys in separate homes; returns dict with fprs + pub blobs."""
     import tempfile
-    base = Path(tempfile.mkdtemp(prefix="verisafe-gpg-test-"))
+    base = Path(tempfile.mkdtemp(prefix="vishwas-gpg-test-"))
     h1 = base / "home1"
     h2 = base / "home2"
     fpr1 = _gen_key(h1, "Alice Signer", "alice@example.org")
@@ -151,13 +151,13 @@ def test_b_valid_but_untrusted(keys, tmp_path):
 
     # capability folds this into 'degraded'
     ctx = _ctx(tmp_path, art)
-    os.environ["VERISAFE_GPG_TRUSTSTORE"] = str(ts)
-    os.environ["VERISAFE_GPG_KNOWN_DIR"] = str(ut)
+    os.environ["VISHWAS_GPG_TRUSTSTORE"] = str(ts)
+    os.environ["VISHWAS_GPG_KNOWN_DIR"] = str(ut)
     try:
         res = gd.GovDocumentCapability()._digital_signature(art, ctx)
     finally:
-        del os.environ["VERISAFE_GPG_TRUSTSTORE"]
-        del os.environ["VERISAFE_GPG_KNOWN_DIR"]
+        del os.environ["VISHWAS_GPG_TRUSTSTORE"]
+        del os.environ["VISHWAS_GPG_KNOWN_DIR"]
     cr = res[0]
     assert cr.name == "digital_signature"
     assert cr.status == "degraded"
@@ -244,11 +244,11 @@ def test_capability_trusted_ok(keys, tmp_path):
     (ts / "alice.asc").write_bytes(keys["pub1"])
 
     ctx = _ctx(tmp_path, art)
-    os.environ["VERISAFE_GPG_TRUSTSTORE"] = str(ts)
+    os.environ["VISHWAS_GPG_TRUSTSTORE"] = str(ts)
     try:
         res = gd.GovDocumentCapability()._digital_signature(art, ctx)
     finally:
-        del os.environ["VERISAFE_GPG_TRUSTSTORE"]
+        del os.environ["VISHWAS_GPG_TRUSTSTORE"]
     cr = res[0]
     assert cr.name == "digital_signature"
     assert cr.status == "ok"

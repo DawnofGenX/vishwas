@@ -12,7 +12,7 @@
       "license": "CC BY-NC 4.0",
       "public_no_auth": true,
       "cpu_viable_on_i5_8250U": "HEAVY",
-      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under Vishwas thermal caps (P8 10s/stage floor, i5-8250U 15W)",
       "notes": "3 checkpoints (~1.21GB each) on GitHub; no publisher-published sha256",
       "fetched": [
         {
@@ -87,7 +87,7 @@
       "license": "MIT-ish (HF)",
       "public_no_auth": true,
       "cpu_viable_on_i5_8250U": "HEAVY",
-      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under Vishwas thermal caps (P8 10s/stage floor, i5-8250U 15W)",
       "notes": "best_model.pth 3791.7MB",
       "fetched": [
         {
@@ -123,7 +123,7 @@
       "license": "(HF)",
       "public_no_auth": true,
       "cpu_viable_on_i5_8250U": "HEAVY",
-      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under VeriSafe thermal caps (P8 10s/stage floor, i5-8250U 15W)",
+      "est_seconds_per_clip_cpu": "HEAVY \u2014 not viable under Vishwas thermal caps (P8 10s/stage floor, i5-8250U 15W)",
       "notes": "best_ft_model.pth 858.8MB + pt_model.200.pth ~972.8MB companion",
       "fetched": [
         {

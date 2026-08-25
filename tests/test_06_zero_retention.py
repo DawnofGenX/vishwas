@@ -1,6 +1,6 @@
 """Zero-retention lifecycle + end-to-end orchestrator behaviour.
 
-The defining property of VeriSafe: after every job — success, exception or
+The defining property of Vishwas: after every job — success, exception or
 timeout — NOTHING user-derived survives on disk (only the out-of-tree audit
 line). These tests prove it against the real JobQuarantine + Orchestrator.
 """
@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from verisafe.events import InputType, MediaKind, Verdict
+from vishwas.events import InputType, MediaKind, Verdict
 
 
 # ------------------------------------------------------------- quarantine --
 def test_purge_deletes_job_dir_and_all_tracked(qroot):
-    from verisafe.quarantine import JobQuarantine
+    from vishwas.quarantine import JobQuarantine
     q = JobQuarantine("job_test", root=qroot)
     sub = q.make_subdir("work")
     f = sub / "orig.mp4"
@@ -35,7 +35,7 @@ def test_purge_deletes_job_dir_and_all_tracked(qroot):
 
 def test_purge_runs_on_exception_path(qroot):
     """Context-manager exit with an active exception still purges."""
-    from verisafe.quarantine import JobQuarantine
+    from vishwas.quarantine import JobQuarantine
     try:
         with JobQuarantine("job_exc", root=qroot) as q:
             f = q.job_dir / "leak.bin"
@@ -48,7 +48,7 @@ def test_purge_runs_on_exception_path(qroot):
 
 
 def test_idempotent_double_purge(qroot):
-    from verisafe.quarantine import JobQuarantine
+    from vishwas.quarantine import JobQuarantine
     q = JobQuarantine("job_dbl", root=qroot)
     first = q.purge()
     second = q.purge()
@@ -58,10 +58,10 @@ def test_idempotent_double_purge(qroot):
 
 def test_audit_line_written_outside_tree(tmp_path, monkeypatch):
     audit = tmp_path / "audit.log"
-    monkeypatch.setenv("VERISAFE_AUDIT_LOG", str(audit))
+    monkeypatch.setenv("VISHWAS_AUDIT_LOG", str(audit))
     # re-import fresh module binding for AUDIT_LOG env (it's read at import)
     import importlib
-    import verisafe.quarantine as quar
+    import vishwas.quarantine as quar
     importlib.reload(quar)
     q = quar.JobQuarantine("job_audit", root=tmp_path)
     q.purge()
@@ -71,7 +71,7 @@ def test_audit_line_written_outside_tree(tmp_path, monkeypatch):
 
 
 def test_stale_scanner_sweeps_old_jobs(qroot, monkeypatch):
-    from verisafe import quarantine as quar
+    from vishwas import quarantine as quar
     old = qroot / "job_old"
     old.mkdir()
     (old / "_manifest.json").write_text(json.dumps({"ts": int(time.time()) - 99999}))

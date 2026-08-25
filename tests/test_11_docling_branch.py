@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from verisafe.capabilities import gov_document as gd
-from verisafe.events import Artifact, InputType, JobContext, MediaKind
+from vishwas.capabilities import gov_document as gd
+from vishwas.events import Artifact, InputType, JobContext, MediaKind
 
 
 @pytest.fixture(autouse=True)

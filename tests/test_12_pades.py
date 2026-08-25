@@ -31,8 +31,8 @@ from pathlib import Path
 
 import pytest
 
-from verisafe.capabilities import gov_document as gd
-from verisafe.events import Artifact, InputType, JobContext, MediaKind
+from vishwas.capabilities import gov_document as gd
+from vishwas.events import Artifact, InputType, JobContext, MediaKind
 
 FIX = Path(__file__).resolve().parent.parent / ".delegation" / "fixtures"
 
@@ -46,7 +46,7 @@ def test_good_blob_matches_oracle():
     r = gd._get_pades().verify_cms(_fix("nod.der"), [])
     assert r["digest_ok"] is True
     assert r["rsa_ok"] is True
-    assert r["signer_cn"] == "VeriSafe Test Signing Authority"
+    assert r["signer_cn"] == "VeriSafe Test Signing Authority"  # historical cert CN inside the fixture blob (binary, not swept by the rename)
 
 
 def test_tampered_embedded_content_flips_digest_only():
@@ -170,16 +170,16 @@ def runtime_chain(tmp_path_factory):
     def _name(cn):
         return _x.Name([
             _x.NameAttribute(_NO.COUNTRY_NAME, "IN"),
-            _x.NameAttribute(_NO.ORGANIZATION_NAME, "VeriSafe Runtime Test CA"),
+            _x.NameAttribute(_NO.ORGANIZATION_NAME, "Vishwas Runtime Test CA"),
             _x.NameAttribute(_NO.COMMON_NAME, cn),
         ])
 
     ca_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
     signer_key = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    ca_name = _name("VeriSafe Runtime Anchor Root")
+    ca_name = _name("Vishwas Runtime Anchor Root")
     ca_cert = _mk_cert(ca_name, ca_name, ca_key.public_key(), ca_key,
                        True, 0x1001, now)
-    signer_cert = _mk_cert(_name("VeriSafe Runtime Signer"), ca_name,
+    signer_cert = _mk_cert(_name("Vishwas Runtime Signer"), ca_name,
                            signer_key.public_key(), ca_key, False, 0x2001, now)
     ca_der = ca_cert.public_bytes(_ser.Encoding.DER)
     signer_der = signer_cert.public_bytes(_ser.Encoding.DER)

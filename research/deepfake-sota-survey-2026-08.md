@@ -1,4 +1,4 @@
-# Deepfake Detection SOTA Survey — VeriSafe (2026-08)
+# Deepfake Detection SOTA Survey — Vishwas (2026-08)
 
 Note: primary web_search backend (Firecrawl keyless) returned 403; research done via arXiv API, HuggingFace Hub API, GitHub API. All HF facts below verified live via the Hub API on 2026-08.
 

@@ -1,4 +1,4 @@
-"""Task: offline QR verification package (verisafe.qr_verify).
+"""Task: offline QR verification package (vishwas.qr_verify).
 
 Hermetic by construction: every QR image is generated inline with the
 qrcode lib into tmp_path, the Aadhaar signature test uses a PINNED numeric
@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 import qrcode
 
-from verisafe.qr_verify import QrVerifyResult, decode_image, verify_payload
-from verisafe.qr_verify import aadhaar_secure
-from verisafe.qr_verify.classifier import classify_payload
+from vishwas.qr_verify import QrVerifyResult, decode_image, verify_payload
+from vishwas.qr_verify import aadhaar_secure
+from vishwas.qr_verify.classifier import classify_payload
 
 
 # ------------------------------------------------------- pinned fixtures ----
@@ -175,13 +175,13 @@ def test_unknown_payload_honest_unavailable():
 
 def test_decoder_cv2_fallback_when_zxing_blind(monkeypatch, tmp_path):
     """zxing returning nothing must fall through to cv2.QRCodeDetector."""
-    import verisafe.qr_verify.decoder as decoder_mod
+    import vishwas.qr_verify.decoder as decoder_mod
 
     monkeypatch.setattr(decoder_mod.zxingcpp, "read_barcodes",
                         lambda *a, **k: [])
-    png = _qr_png(tmp_path / "fallback.png", "verisafe-fallback-probe-123")
+    png = _qr_png(tmp_path / "fallback.png", "vishwas-fallback-probe-123")
     got = decoder_mod.decode_image(str(png))
-    assert got == ["verisafe-fallback-probe-123"]
+    assert got == ["vishwas-fallback-probe-123"]
 
     # and garbage input degrades to an empty list instead of raising
     assert decoder_mod.decode_image(tmp_path / "does_not_exist.png") == []

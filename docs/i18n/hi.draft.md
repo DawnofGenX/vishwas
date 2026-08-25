@@ -1,4 +1,4 @@
-# VeriSafe i18n — Hindi (hi) review draft
+# Vishwas i18n — Hindi (hi) review draft
 
 > **DRAFT — pending native review.** Existing `hi` strings are BEST-EFFORT
 > machine output (see module docstring); the 12 module values in the table

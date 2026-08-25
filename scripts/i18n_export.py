@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Machine-generate docs/i18n/en.md from the live i18n module.
 
-Reads src/verisafe/i18n.py PROGRAMMATICALLY (import, never regex-scraping the
+Reads src/vishwas/i18n.py PROGRAMMATICALLY (import, never regex-scraping the
 source) and writes a clean markdown table of every key present in
 ``i18n._DEFAULTS`` (each key maps to per-language strings; the English value
 is the authoritative corpus row), PLUS the two Task-3.2 follow-up keys
@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import verisafe.i18n as i18n_mod  # noqa: E402
+import vishwas.i18n as i18n_mod  # noqa: E402
 
 # Task 3.2: new user-facing surfaces (Phase 2 orchestrator) pre-drafted into
 # the corpus. Deliberately NOT merged into i18n._DEFAULTS here — that is the
@@ -76,10 +76,10 @@ def main() -> int:
     n_mod = sum(1 for _, _, o in rows if o == "in module")
     n_new = len(rows) - n_mod
     lines: list[str] = [
-        "# VeriSafe i18n — English corpus (machine-generated)",
+        "# Vishwas i18n — English corpus (machine-generated)",
         "",
         "> **Auto-generated** by `scripts/i18n_export.py` from the live",
-        "> `src/verisafe/i18n.py` module (`_DEFAULTS`). Do not hand-edit —",
+        "> `src/vishwas/i18n.py` module (`_DEFAULTS`). Do not hand-edit —",
         "> re-run the script after any change to the module.",
         ">",
         "> English is the authoritative base language. Every other language",

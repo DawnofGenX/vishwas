@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from verisafe.file_validator import classify_bytes, FileValidator, make_artifact
-from verisafe.events import MediaKind, InputType
+from vishwas.file_validator import classify_bytes, FileValidator, make_artifact
+from vishwas.events import MediaKind, InputType
 
 
 # ---------------------------------------------------------------- byte level --

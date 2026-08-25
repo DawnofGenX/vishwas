@@ -1,6 +1,6 @@
 # Deepfake Detection — Research & Evidence Note (P1)
 
-**VeriSafe** | generated 2026-08-19 by orchestrator direct verification (subagent batch deleg_02086fd4 died on provider rate-caps before writing; findings below re-verified against primary sources). Every arXiv ID verified via `export.arxiv.org/api/query`; venue taken from each record's own `arxiv:comment` field.
+**Vishwas** | generated 2026-08-19 by orchestrator direct verification (subagent batch deleg_02086fd4 died on provider rate-caps before writing; findings below re-verified against primary sources). Every arXiv ID verified via `export.arxiv.org/api/query`; venue taken from each record's own `arxiv:comment` field.
 
 ## 0. Headline finding (read first)
 
@@ -10,7 +10,7 @@
 - **Fake-Mamba — RESOLVED.** *Real*: “Fake-Mamba: Real-Time Speech Deepfake Detection Using Bidirectional Mamba as Self-Attention’s Alternative”, arXiv **2508.09294** (Xuan, Zhu, Zhang, Lin, Kinnunen — NTU/Toki group), XLSR front-end + bi-Mamba. The earlier “zero hits” note was a query miss, not a non-existence.
 - **AASIST base-paper correction:** AASIST proper is **“Audio Anti-Spoofing using Integrated Spectro-Temporal Graph Attention Networks”**, arXiv **2110.01200** (Jung, Heo, Tak, Shim, Chung — NCSOFT/KAIST line, submitted ICASSP 2022). The previously cited 2006.03214 (Wu/Liu/Lee black-box defense) is a *related* SSL anti-spoofing paper, not AASIST.
 
-Per project rules these are flagged **UNVERIFIED, not fabricated**: the capability modules keep their weight-file gates (`VERISAFE_EFFORT_WEIGHTS`, etc.) so they activate only when someone drops a real weights path in. The pipeline runs fully without them (T0/T1 heuristics + any gated model that exists). If the user has PDFs/links to those exact papers, point VeriSafe at them and the gates light up.
+Per project rules these are flagged **UNVERIFIED, not fabricated**: the capability modules keep their weight-file gates (`VISHWAS_EFFORT_WEIGHTS`, etc.) so they activate only when someone drops a real weights path in. The pipeline runs fully without them (T0/T1 heuristics + any gated model that exists). If the user has PDFs/links to those exact papers, point Vishwas at them and the gates light up.
 
 Everything else below is verified.
 
@@ -35,7 +35,7 @@ Everything else below is verified.
 | SpAArSIST | 2606.11674 | 2026-06 | deployment-oriented sparsified AASIST (replaces learned pooling + stack-node attention) — best candidate for CPU-constrained serving |
 | AASIST3 | 2408.17352 | ASVspoof 2024 (KAN-enhanced, SSL features) | challenge SOTA of 2024 |
 | SSL front-ends (BEATs/HuBERT/Wav2Vec2 fine-tuned) | 2111.07725 (v3, ISCA Odyssey2022) | sub-band analysis added in v3 — relevant to bandwidth-limited phone audio | direct evidence SSL backbones transfer to spoofing CM |
-| Towards Scalable AASIST (graph attention) | 2507.11777 | 2025-07 | current AASIST-lineage refresh; our `VERISAFE_AASIST_WEIGHTS` gate target |
+| Towards Scalable AASIST (graph attention) | 2507.11777 | 2025-07 | current AASIST-lineage refresh; our `VISHWAS_AASIST_WEIGHTS` gate target |
 | **Fake-Mamba** | **2508.09294** | 2025-08 (real-time speech deepfake, bi-Mamba replaces self-attention) | the paper the spec meant by “Fake-Mamba”; XLSR front-end, latency-focused |
 | XLSR-Mamba | 2411.10027 | IEEE SPL 2025 (accepted) | Mamba dual-column bidirectional for spoofing audit — sibling line |
 | RawBMamba | 2406.06086 | Interspeech 2024 | end-to-end bi-Mamba on raw waveforms; good fit for variable-bitrate voice memos |
@@ -51,7 +51,7 @@ Everything else below is verified.
 | From Talking to Singing | 2605.27944 | **ICML 2026** (per comment) | new challenge set: singing AV deepfakes — future threat-surface note |
 | AV local temporal inconsistencies | 2501.08137 | ICASSP 2025 | shared w/ section 1 |
 
-Our `cross_modal.py` implements modality-localized correlation (lip-sync proxy, AV correlation sign/strength) behind `VERISAFE_HAVIC_WEIGHTS`; without weights it degrades to ffmpeg-measured A/V offset + pitch-contour correlation — honest heuristic tier.
+Our `cross_modal.py` implements modality-localized correlation (lip-sync proxy, AV correlation sign/strength) behind `VISHWAS_HAVIC_WEIGHTS`; without weights it degrades to ffmpeg-measured A/V offset + pitch-contour correlation — honest heuristic tier.
 
 ## 4. Robustness to transcoding (the actual failure mode on WhatsApp)
 
@@ -63,7 +63,7 @@ Our `cross_modal.py` implements modality-localized correlation (lip-sync proxy, 
 | Benchmarking Audio DFD Robustness in Real-World Communication Scenarios | 2504.12423 (v4) | **EUSIPCO 2025** | communication-channel degradation (packet loss, codec) benchmark — the most WhatsApp-realistic public study found |
 | Proteus | 2606.29544 | 2026 | automated adversarial robustness testing of audio DFDs |
 
-**Direct implication for VeriSafe** (and why we never average raw scores): after WhatsApp's Opus+AAC re-encode, detector AUROC drops enough that a single-model threshold flips verdicts. Our answer is the OOF-stacked LR with calibration + selective prediction (abstain when signal conflict), plus the transform-matrix stress test in P7 that replays every detector through the same codec ladder and records per-score drift.
+**Direct implication for Vishwas** (and why we never average raw scores): after WhatsApp's Opus+AAC re-encode, detector AUROC drops enough that a single-model threshold flips verdicts. Our answer is the OOF-stacked LR with calibration + selective prediction (abstain when signal conflict), plus the transform-matrix stress test in P7 that replays every detector through the same codec ladder and records per-score drift.
 
 ### 4.1 Learned-stage adversarial sensitivity — small-N real-weights check (2026-08-21)
 
@@ -74,7 +74,7 @@ score today", nothing more.
 
 **Method.** Base clip: 4 s `testsrc`+`sine`, 640×360 @ 8 fps, h264+AAC
 (same recipe as the P1 proof fixture; original purged by zero-retention).
-Six transform variants built with ffmpeg (`VERISAFE_FFMPEG_THREADS=1`),
+Six transform variants built with ffmpeg (`VISHWAS_FFMPEG_THREADS=1`),
 audio-affecting transforms keeping the video stream and video-affecting ones
 keeping the audio stream so all three families score on every variant:
 
@@ -138,12 +138,12 @@ No verdict flips anywhere in the matrix.
 
 | Component | Slot | Gate env var | Weights status 2026-08-19 | CPU verdict | Integration effort |
 |---|---|---|---|---|---|
-| Effort (ICML'25 Oral) | spatial/AIGI | VERISAFE_EFFORT_WEIGHTS | **RESOLVED 2411.15633**; official repo YZY-stack/Effort-AIGI-Detection (license unconfirmed) | gated-off until weights downloaded | 1–2 h to load into gate once weights exist |
-| VB+StA | temporal | VERISAFE_VBSTA_WEIGHTS | **NOT FOUND — kept as placeholder only** (substitute: 2501.08137 AV-local-temporal) | gated-off | 1–2 h |
-| DeMamba | degraded/general | VERISAFE_DEMAMBA_WEIGHTS | **verified** 2405.19707 | RUNNABLE-SLOW if weights obtainable | 2–4 h (weight-format adapter) |
-| AASIST(-lineage) | audio | VERISAFE_AASIST_WEIGHTS | **verified** 2006.03214 / 2507.11777 | RUNNABLE-SLOW | 2–4 h |
-| XLSR-Mamba / RawBMamba | audio-alt | (fold into AASIST gate or VERISAFE_SSL_AUDIO_WEIGHTS) | **verified** 2411.10027 / 2406.06086 | RUNNABLE-SLOW | 2–4 h |
-| HAVIC-class (Holistic AV) | cross-modal | VERISAFE_HAVIC_WEIGHTS | **verified** 2603.23960 | RUNNABLE-SLOW | 4–6 h (needs both modalities loaded) |
+| Effort (ICML'25 Oral) | spatial/AIGI | VISHWAS_EFFORT_WEIGHTS | **RESOLVED 2411.15633**; official repo YZY-stack/Effort-AIGI-Detection (license unconfirmed) | gated-off until weights downloaded | 1–2 h to load into gate once weights exist |
+| VB+StA | temporal | VISHWAS_VBSTA_WEIGHTS | **NOT FOUND — kept as placeholder only** (substitute: 2501.08137 AV-local-temporal) | gated-off | 1–2 h |
+| DeMamba | degraded/general | VISHWAS_DEMAMBA_WEIGHTS | **verified** 2405.19707 | RUNNABLE-SLOW if weights obtainable | 2–4 h (weight-format adapter) |
+| AASIST(-lineage) | audio | VISHWAS_AASIST_WEIGHTS | **verified** 2006.03214 / 2507.11777 | RUNNABLE-SLOW | 2–4 h |
+| XLSR-Mamba / RawBMamba | audio-alt | (fold into AASIST gate or VISHWAS_SSL_AUDIO_WEIGHTS) | **verified** 2411.10027 / 2406.06086 | RUNNABLE-SLOW | 2–4 h |
+| HAVIC-class (Holistic AV) | cross-modal | VISHWAS_HAVIC_WEIGHTS | **verified** 2603.23960 | RUNNABLE-SLOW | 4–6 h (needs both modalities loaded) |
 
 ## Gaps and risks
 1. **VB+StA unverifiable** — no public record found on arXiv/CVPR2025/web despite multiple distinct query families; treat as internal codename/mis-attribution. Do **not** cite it in user-facing docs. **EFFORT is resolved** (2411.15633, ICML 2025 Oral, official repo available); its repo declares no SPDX license → verify weights licensing before shipping.

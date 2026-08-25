@@ -1,22 +1,22 @@
-# VeriSafe Operations
+# Vishwas Operations
 
 ## Stale-quarantine sweep (`scripts/stale_sweep.sh`)
 
-Every job works inside a quarantine dir under `~/verisafe/quarantine`; if the
+Every job works inside a quarantine dir under `~/vishwas/quarantine`; if the
 process crashes before its purger runs, that dir lingers. The sweep calls
 `scan_stale_quarantines()` to delete any quarantine whose manifest `ts` is
-older than `VERISAFE_STALE_TTL_S` (default 7200s) and appends an audit line
+older than `VISHWAS_STALE_TTL_S` (default 7200s) and appends an audit line
 per removal. It is a silent watchdog: empty output + exit 0 on a quiet tick,
 a swept-count line only when something was removed, errors on stderr with a
 non-zero exit.
 
 - **Cadence:** run every 15 minutes via cron (TTL is 2h, so worst-case residue
   lives ~2h15m). Suggested line:
-  `*/15 * * * * /home/hermes/verisafe/scripts/stale_sweep.sh`
-- **Manual run:** `/home/hermes/verisafe/scripts/stale_sweep.sh` (add
-  `VERISAFE_QUARANTINE=...` / `VERISAFE_AUDIT_LOG=...` to point elsewhere).
+  `*/15 * * * * /home/hermes/vishwas/scripts/stale_sweep.sh`
+- **Manual run:** `/home/hermes/vishwas/scripts/stale_sweep.sh` (add
+  `VISHWAS_QUARANTINE=...` / `VISHWAS_AUDIT_LOG=...` to point elsewhere).
 - **Audit log:** `logs/purge_audit.log` (one JSON line per purge/sweep;
-  override with `VERISAFE_AUDIT_LOG`).
+  override with `VISHWAS_AUDIT_LOG`).
 
 ## Rich `/health` (service observability)
 
@@ -30,7 +30,7 @@ the `MessageProcessor.process()` outcome path), `quarantines_open`
 - **Counters reset on restart** by design (no DB) — treat them as
   since-last-restart figures, not lifetime totals.
 - **Daily check:** `curl -s localhost:2785/health | python3 -m json.tool`.
-- **Systemd:** see `deploy/verisafe.service.example` for a ready unit
+- **Systemd:** see `deploy/vishwas.service.example` for a ready unit
   (`Restart=on-failure`, `RestartSec=5`); install with the comment-block
   steps at the top of that file.
 
@@ -67,11 +67,11 @@ passing a due-diligence process, and being issued OAuth2/OIDC credentials.
    MoHA/UIDAI) and submit the due-diligence material the portal asks for.
    *(~10 min to submit; approval is an external wait — unbounded)*
 3. **On credential issuance**, set in the service environment:
-   - `VERISAFE_DIGILOCKER_KEY` — required; without it the pipeline emits
+   - `VISHWAS_DIGILOCKER_KEY` — required; without it the pipeline emits
      `digilocker_verify = unavailable` and skips authoritative DigiLookup.
-   - `VERISAFE_DIGILOCKER_URL` — optional override; code default is
+   - `VISHWAS_DIGILOCKER_URL` — optional override; code default is
      `https://apis.digilocker.gov.in/dl/v1/verDoc`
-     (`src/verisafe/capabilities/gov_document.py::_digilocker`). Confirm the
+     (`src/vishwas/capabilities/gov_document.py::_digilocker`). Confirm the
      correct verify endpoint against the partner docs before relying on the
      default.
 
@@ -90,16 +90,16 @@ never scrape them; the QR/link flow is the supported shape.
 2. **Receive the OAuth2 client-credentials pair** (`client_id`/`secret`);
    rate limits are negotiated per consumer, not published as fixed numbers.
 3. **Set in the service environment:**
-   - `VERISAFE_APISETU_TOKEN` — required; without it the pipeline emits
+   - `VISHWAS_APISETU_TOKEN` — required; without it the pipeline emits
      `api_setu_lookup = unavailable`.
-   - `VERISAFE_APISETU_BASE` — set this to the gateway host from your
+   - `VISHWAS_APISETU_BASE` — set this to the gateway host from your
      partner onboarding (`<subdomain>.apisetugateway.in` or
      `gateway.apisetu.gov.in`). The code default
      (`https://apisetu.gov.in/api/v1`) predates the platform re-homing —
      verify the correct base at the portal.
 4. **Legal posture (non-negotiable):** personal KYC data returned by these
    APIs may only be processed under the consuming entity's legal
-   authorization **and** the user's consent; keep VeriSafe's zero-retention
+   authorization **and** the user's consent; keep Vishwas's zero-retention
    posture or the ToS are violated.
 
 **What it unlocks:** registered-consumer invocation of the IndiaStack
@@ -143,8 +143,8 @@ refresher (`scripts/build_rag_cache.py`; refresh cadence monthly, ~20 calls).
 | Credential | Ad-hoc live proof | Expected |
 |---|---|---|
 | none (discovery) | snippet above | `status: Success`, `nbHits: 15` for aadhaar |
-| `VERISAFE_APISETU_BASE`+`TOKEN` | `curl -s "$VERISAFE_APISETU_BASE/pan/status" -H "Authorization: Bearer $VERISAFE_APISETU_TOKEN"` | JSON response, **not** 401/403 (exact auth-header shape per the SOP — verify at `docs.apisetu.gov.in`) |
-| `VERISAFE_DIGILOCKER_URL`+`KEY` | `curl -s "$VERISAFE_DIGILOCKER_URL" -H "Authorization: Bearer $VERISAFE_DIGILOCKER_KEY"` | non-401/403 per the partner-docs OAuth flow (verify at portal) |
+| `VISHWAS_APISETU_BASE`+`TOKEN` | `curl -s "$VISHWAS_APISETU_BASE/pan/status" -H "Authorization: Bearer $VISHWAS_APISETU_TOKEN"` | JSON response, **not** 401/403 (exact auth-header shape per the SOP — verify at `docs.apisetu.gov.in`) |
+| `VISHWAS_DIGILOCKER_URL`+`KEY` | `curl -s "$VISHWAS_DIGILOCKER_URL" -H "Authorization: Bearer $VISHWAS_DIGILOCKER_KEY"` | non-401/403 per the partner-docs OAuth flow (verify at portal) |
 
 End-to-end: run one real job through the pipeline and confirm the verdict no
 longer lists `digilocker_verify` / `api_setu_lookup` as `unavailable`, then
@@ -159,4 +159,4 @@ the evidence date (same pattern as the VirusTotal row).
 - Exact API Setu token-exchange call and auth-header shape for consumer
   requests (the SOP page body was JS-rendered at capture time; only the
   partners.apisetu.gov.in → client-credentials model is documented).
-- The correct production gateway base host for `VERISAFE_APISETU_BASE`.
+- The correct production gateway base host for `VISHWAS_APISETU_BASE`.

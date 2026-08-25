@@ -1,9 +1,9 @@
 """Direct probe: strict-load + inference proof for the vendored XLSR-Mamba gate.
 
-Run: PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
+Run: PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/vishwas/src \
      python3 scripts/verify_xlsrmamba.py
-Expects the real checkpoint at $VERISAFE_XLSRMAMBA_WEIGHTS (default
-/opt/verisafe/models/xlsr-mamba/model.safetensors). Prints strict-load tensor
+Expects the real checkpoint at $VISHWAS_XLSRMAMBA_WEIGHTS (default
+/opt/vishwas/models/xlsr-mamba/model.safetensors). Prints strict-load tensor
 counts, a synthetic-waveform score, and cuda/cpu wall times. Exits non-zero on
 any failure.
 """
@@ -18,8 +18,8 @@ import numpy as np
 
 def main() -> int:
     path = os.environ.get(
-        "VERISAFE_XLSRMAMBA_WEIGHTS",
-        "/opt/verisafe/models/xlsr-mamba/model.safetensors",
+        "VISHWAS_XLSRMAMBA_WEIGHTS",
+        "/opt/vishwas/models/xlsr-mamba/model.safetensors",
     )
     if not os.path.exists(path):
         print(f"FAIL: checkpoint missing at {path}")
@@ -29,9 +29,9 @@ def main() -> int:
 
     from safetensors import safe_open
 
-    from verisafe.model_adapters import _extract_state_dict, resolve
-    from verisafe.device import resolve_device
-    from verisafe.model_archs import get_arch
+    from vishwas.model_adapters import _extract_state_dict, resolve
+    from vishwas.device import resolve_device
+    from vishwas.model_archs import get_arch
 
     print("torch:", torch.__version__, "| device:", resolve_device())
 
@@ -67,7 +67,7 @@ def main() -> int:
     results = []
     devices = ["cuda", "cpu"] if torch.cuda.is_available() else ["cpu"]
     for dev in devices:
-        os.environ["VERISAFE_DEVICE"] = dev
+        os.environ["VISHWAS_DEVICE"] = dev
         m = spec.build()
         if not spec.apply_state(m, sd):
             print(f"FAIL: {dev}: strict load failed")
@@ -80,15 +80,15 @@ def main() -> int:
         del m
         if dev == "cuda":
             torch.cuda.empty_cache()
-    os.environ.pop("VERISAFE_DEVICE", None)
+    os.environ.pop("VISHWAS_DEVICE", None)
 
     # determinism check on the last-built model
     p2 = spec.score(model, wav)
     print(f"determinism: {abs(p2 - results[-1][1]) < 1e-6}")
 
     # ---- through the production adapter seam ------------------------------
-    os.environ.setdefault("VERISAFE_XLSRMAMBA_WEIGHTS", path)
-    adapter = resolve("VERISAFE_XLSRMAMBA_WEIGHTS")
+    os.environ.setdefault("VISHWAS_XLSRMAMBA_WEIGHTS", path)
+    adapter = resolve("VISHWAS_XLSRMAMBA_WEIGHTS")
     print("adapter registered:", adapter is not None)
     obj = adapter.load(path)
     print("loaded object:", type(obj).__name__ if obj else None,

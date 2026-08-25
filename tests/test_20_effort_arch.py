@@ -24,13 +24,13 @@ except Exception as e:
 
 if _TORCH_ERROR is None:
     try:
-        from verisafe.model_archs import get_arch
-        from verisafe.model_archs.effort import (
+        from vishwas.model_archs import get_arch
+        from vishwas.model_archs.effort import (
             EffortSpec,
             _EffortNet,
             _OrthAlignLinear,
         )
-        from verisafe.model_archs.base import ArchSpec
+        from vishwas.model_archs.base import ArchSpec
         _ARCH_ERROR = None
     except Exception as e:  # torch present but arch not vendored -> RED
         _ARCH_ERROR = f"{type(e).__name__}: {e}"
@@ -63,7 +63,7 @@ else:
         spec = get_arch("effort")
         assert isinstance(spec, ArchSpec)
         assert spec.name == "effort"
-        assert spec.weight_env == "VERISAFE_EFFORT_WEIGHTS"
+        assert spec.weight_env == "VISHWAS_EFFORT_WEIGHTS"
         assert getattr(spec, "implemented", False) is True
 
     # ---------------------------------------------------------------- build --

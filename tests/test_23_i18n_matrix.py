@@ -11,7 +11,7 @@ renders its OWN stored string for every key (no silent en-fallback), while the
 en-fallback branch of ``t()`` is proven still available via a synthetic
 missing-language case (hermetic ``monkeypatch``, auto-restored).
 
-Hermetic by construction: imports ``verisafe`` only, no network, no filesystem
+Hermetic by construction: imports ``vishwas`` only, no network, no filesystem
 writes, no global-state mutation that outlives a test.
 """
 from __future__ import annotations
@@ -20,10 +20,10 @@ import re
 
 import pytest
 
-import verisafe.i18n as i18n_mod
-from verisafe.events import Verdict
-from verisafe.i18n import _DEFAULTS, _SUPPORTED, t
-from verisafe.report import ReportBuilder
+import vishwas.i18n as i18n_mod
+from vishwas.events import Verdict
+from vishwas.i18n import _DEFAULTS, _SUPPORTED, t
+from vishwas.report import ReportBuilder
 
 # Named printf-style placeholders used by the string tables.
 _PLACEHOLDER_RE = re.compile(r"%\((\w+)\)s")

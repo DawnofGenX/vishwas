@@ -1,7 +1,7 @@
 """Robustness transform matrix (media_utils) consistency — P7 red-team focus.
 
 Deepfake detectors trained on clean media fail after WhatsApp-style
-transcoding. VeriSafe evaluates candidates under a fixed degradation battery.
+transcoding. Vishwas evaluates candidates under a fixed degradation battery.
 These tests pin the *composition* of that battery against the real ffmpeg-recipe
 source (static, no codec needed), plus one behavioural test proving the
 thermal-safe thread cap propagates into every ffmpeg invocation.
@@ -11,7 +11,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import verisafe.media_utils as mu
+import vishwas.media_utils as mu
 
 SRC = Path(mu.__file__).read_text()
 
@@ -53,7 +53,7 @@ def test_audio_matrix_covers_whatsapp_voice_note_transcoding():
 
 # -------------------------------------------------------------- thermal ------
 def test_thread_cap_env_tunable_and_applied_to_every_ffmpeg_call(tmp_path, monkeypatch):
-    """P8 thermal-safety: every ffmpeg invocation carries -threads <VERISAFE_FFMPEG_THREADS>."""
+    """P8 thermal-safety: every ffmpeg invocation carries -threads <VISHWAS_FFMPEG_THREADS>."""
     recorded: list[list[str]] = []
 
     class FakeProc:

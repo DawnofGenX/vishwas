@@ -1,8 +1,8 @@
-# VeriSafe — Workflow: Decision Tree & Failure Matrix
+# Vishwas — Workflow: Decision Tree & Failure Matrix
 
 Companion to `docs/ARCHITECTURE.md`. This page is the *operational* reference: given a
 message on WhatsApp, exactly which code runs in what order, and what happens when each
-stage degrades or fails. Everything below maps to real functions in `src/verisafe/`.
+stage degrades or fails. Everything below maps to real functions in `src/vishwas/`.
 
 ---
 

@@ -18,12 +18,12 @@ import numpy as np
 import pytest
 import qrcode
 
-from verisafe.capabilities import gov_document as gd
-from verisafe.capabilities.base import CheckResult
-from verisafe.capabilities.gov_document import GovDocumentCapability
-from verisafe.events import Artifact, InputType, JobContext, MediaKind
-from verisafe.qr_verify import QrVerifyResult
-from verisafe.qr_verify import aadhaar_secure
+from vishwas.capabilities import gov_document as gd
+from vishwas.capabilities.base import CheckResult
+from vishwas.capabilities.gov_document import GovDocumentCapability
+from vishwas.events import Artifact, InputType, JobContext, MediaKind
+from vishwas.qr_verify import QrVerifyResult
+from vishwas.qr_verify import aadhaar_secure
 
 # ------------------------------------------------- pinned fixtures (test_24) --
 
@@ -77,9 +77,9 @@ def _hermetic(monkeypatch, tmp_path):
     indicator-only records for a text-less PNG, keeping this end-to-end honest.
     """
     monkeypatch.setattr(gd, "_extract_text", lambda art, ctx: ("", "none"))
-    monkeypatch.setenv("VERISAFE_RAG_CACHE", str(tmp_path / "rag-cache"))
-    for var in ("VERISAFE_DOCLING", "VERISAFE_DIGILOCKER_KEY",
-                "VERISAFE_APISETU_TOKEN", "VERISAFE_QR_EXTRA_TRUST_PATHS"):
+    monkeypatch.setenv("VISHWAS_RAG_CACHE", str(tmp_path / "rag-cache"))
+    for var in ("VISHWAS_DOCLING", "VISHWAS_DIGILOCKER_KEY",
+                "VISHWAS_APISETU_TOKEN", "VISHWAS_QR_EXTRA_TRUST_PATHS"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -91,7 +91,7 @@ def _qr_checks(results: list[CheckResult]) -> list[CheckResult]:
 
 def test_aadhaar_qr_flows_end_to_end_through_analyze(monkeypatch, tmp_path):
     """Photo'd-card PNG carrying a signed Aadhaar QR -> one ok qr_payload_check."""
-    monkeypatch.setenv("VERISAFE_QR_EXTRA_TRUST_PATHS", str(_write_pubkey(tmp_path)))
+    monkeypatch.setenv("VISHWAS_QR_EXTRA_TRUST_PATHS", str(_write_pubkey(tmp_path)))
     png = _qr_png(tmp_path / "card.png", _AADHAAR_NUMERIC)
     art = _image_artifact(png)
 
@@ -114,7 +114,7 @@ def test_aadhaar_qr_flows_end_to_end_through_analyze(monkeypatch, tmp_path):
 
 def test_forged_aadhaar_qr_yields_failed_check_and_high_prob_forged(monkeypatch, tmp_path):
     """Tampered payload inside a QR image -> failed check, prob_forged 0.9."""
-    monkeypatch.setenv("VERISAFE_QR_EXTRA_TRUST_PATHS", str(_write_pubkey(tmp_path)))
+    monkeypatch.setenv("VISHWAS_QR_EXTRA_TRUST_PATHS", str(_write_pubkey(tmp_path)))
     signed, sig, _fields, _presence = aadhaar_secure.parse_payload(_AADHAAR_NUMERIC)
     tampered = bytearray(signed)
     tampered[10] ^= 0x01                                # flip one body byte
@@ -189,7 +189,7 @@ def test_capability_layer_scrubs_uid_runs_defensively(monkeypatch, tmp_path):
                                        "aadhaar_last4": "4321"},
                               detail="hostile fixture bypassing package scrub")
 
-    monkeypatch.setattr("verisafe.qr_verify.verify_payload", hostile_verify)
+    monkeypatch.setattr("vishwas.qr_verify.verify_payload", hostile_verify)
     art = _image_artifact(png)
 
     results = GovDocumentCapability().analyze(art, _ctx(art, tmp_path))
@@ -209,7 +209,7 @@ def test_verify_crash_becomes_failed_evidence_not_exception(monkeypatch, tmp_pat
     def bomb(payload, *, extra_trust_paths=None):
         raise RuntimeError("simulated verifier crash")
 
-    monkeypatch.setattr("verisafe.qr_verify.verify_payload", bomb)
+    monkeypatch.setattr("vishwas.qr_verify.verify_payload", bomb)
     art = _image_artifact(png)
 
     results = GovDocumentCapability().analyze(art, _ctx(art, tmp_path))

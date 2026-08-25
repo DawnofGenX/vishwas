@@ -1,11 +1,11 @@
 # QR Verification Scouting — 2026-08-22
 
-This document records the completed technology scouting that feeds the `qr_verify` implementation (`src/verisafe/qr_verify/`) — the offline QR-based verification feature for Indian government IDs on VeriSafe's zero-retention WhatsApp fraud-check platform. Every claim below was researched and empirically validated on 2026-08-22 (decoder bake-off run locally on py3.12 / cv2 5.0.0); the **Adoption decisions** subsection states what the implementation actually builds on, and the body preserves the full evidence, tables, links, and caveats behind those choices.
+This document records the completed technology scouting that feeds the `qr_verify` implementation (`src/vishwas/qr_verify/`) — the offline QR-based verification feature for Indian government IDs on Vishwas's zero-retention WhatsApp fraud-check platform. Every claim below was researched and empirically validated on 2026-08-22 (decoder bake-off run locally on py3.12 / cv2 5.0.0); the **Adoption decisions** subsection states what the implementation actually builds on, and the body preserves the full evidence, tables, links, and caveats behind those choices.
 
 ## Adoption decisions
 
 - **Decoder:** zxing-cpp primary + cv2 fallback.
-- **Aadhaar:** own RSA-SHA256 verification against pinned certs in `src/verisafe/assets/uidai_certs/`.
+- **Aadhaar:** own RSA-SHA256 verification against pinned certs in `src/vishwas/assets/uidai_certs/`.
 - **EPIC:** static-key AES per epicqr spec.
 - **PAN 2.0 + UAN:** best-effort/unverified, display-only.
 - **Compliance:** Aadhaar Act §29 analysis holds with zero-retention design.
@@ -14,7 +14,7 @@ This document records the completed technology scouting that feeds the `qr_verif
 
 # QR Verification Scouting
 
-*Technology scouting for offline QR-based verification of Indian govt IDs (VeriSafe). Researched 2026-08-22 via PyPI JSON API, GitHub API/READMEs, OpenCV docs, and official uidai.gov.in Gazette PDF. Decoder claims were verified empirically on this machine (py3.12, cv2 5.0.0).*
+*Technology scouting for offline QR-based verification of Indian govt IDs (Vishwas). Researched 2026-08-22 via PyPI JSON API, GitHub API/READMEs, OpenCV docs, and official uidai.gov.in Gazette PDF. Decoder claims were verified empirically on this machine (py3.12, cv2 5.0.0).*
 
 ## Q1 — Best Python QR decoder for low-quality printed/photo QRs
 
@@ -70,8 +70,8 @@ This document records the completed technology scouting that feeds the `qr_verif
 ## Q5 — Compliance quick-check
 
 Grounded in the official Gazette text (fetched from uidai.gov.in's copy of the Aadhaar Act 2016 PDF):
-- **§29(1):** core biometric information shall never be shared/used for other purposes — **not applicable**: VeriSafe touches no biometrics.
-- **§29(3):** a requesting entity must not use identity info beyond the purpose specified to the individual, nor disclose it further **except with the individual's prior consent**. Transient in-memory comparison of the presented document's name + masked UID, disclosed to nobody, retained nowhere, with user consent, satisfies this. (Strictly, §29 addresses "requesting entities" in the UIDAI authentication ecosystem; VeriSafe doing offline document-vs-claim matching is arguably outside that regime — noted as an interpretation, not legal advice.)
+- **§29(1):** core biometric information shall never be shared/used for other purposes — **not applicable**: Vishwas touches no biometrics.
+- **§29(3):** a requesting entity must not use identity info beyond the purpose specified to the individual, nor disclose it further **except with the individual's prior consent**. Transient in-memory comparison of the presented document's name + masked UID, disclosed to nobody, retained nowhere, with user consent, satisfies this. (Strictly, §29 addresses "requesting entities" in the UIDAI authentication ecosystem; Vishwas doing offline document-vs-claim matching is arguably outside that regime — noted as an interpretation, not legal advice.)
 - **§29(4):** no publishing/display/posting of Aadhaar numbers publicly — ensure masked UID (XXXX XXXX 1234) is never echoed into logs, WhatsApp replies, or reports.
 - UIDAI itself sanctions offline verification flows (mAadhaar QR scan, paperless offline e-KYC XML with share code) — an official offline-verification pattern exists, so the feature class is not prohibited.
 - DPDP Act 2023 general obligations (purpose limitation, data minimisation) are satisfied by zero-retention transient processing. **Nothing found that would prohibit the feature outright.** Residual uncertainty: no UIDAI circular specifically blessing third-party QR-based document checks was located (source-poor area); recommend the zero-retention design + masked-UID-only output as implemented.

@@ -29,11 +29,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from verisafe.file_validator import classify_bytes, FileValidator, make_artifact
-from verisafe.url_guard import normalize_url, dns_resolve_safe, SsrfBlocked
-from verisafe.llm_guard import sanitize_user_input, build_interpretation_prompt
-from verisafe.events import MediaKind, InputType
-from verisafe.quarantine import JobQuarantine
+from vishwas.file_validator import classify_bytes, FileValidator, make_artifact
+from vishwas.url_guard import normalize_url, dns_resolve_safe, SsrfBlocked
+from vishwas.llm_guard import sanitize_user_input, build_interpretation_prompt
+from vishwas.events import MediaKind, InputType
+from vishwas.quarantine import JobQuarantine
 
 
 def _wav(n=16000):
@@ -159,7 +159,7 @@ def test_r3_encoded_smuggled_instruction_stays_in_untrusted_block_only():
 
 # ------------------------------------------------- R4 webhook forgery --------
 def test_r4_hmac_verification_deterministic():
-    from verisafe import channels
+    from vishwas import channels
     secret = "test-secret-key"
     body = json.dumps({"message": "hi"}).encode()
     good = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
@@ -178,7 +178,7 @@ FFMPEG = shutil.which("ffmpeg")
 def test_r5_codec_ladder_variants_bounded_and_finite(qroot):
     """One source wav through the WhatsApp-realistic codec ladder must yield
     real, non-empty, finite-size variants; no crash, no inf/nan leaks."""
-    from verisafe import media_utils
+    from vishwas import media_utils
     src = qroot / "src.wav"
     src.write_bytes(_wav(16000))
     workdir = qroot / "ladder"

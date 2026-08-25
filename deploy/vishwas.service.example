@@ -1,0 +1,39 @@
+# Vishwas webhook — systemd unit EXAMPLE (Task 2.3).
+#
+# This is a template, NOT a live unit. Install steps:
+#   1. sudo cp deploy/vishwas.service.example /etc/systemd/system/vishwas.service
+#   2. Edit User=/Group=/WorkingDirectory=/ExecStart= for your host
+#      (paths below assume the repo at /home/hermes/vishwas).
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now vishwas.service
+#   5. Verify: curl -s http://127.0.0.1:2785/health | python3 -m json.tool
+#
+# NOTE: the jobs_* counters reported by /health are in-memory and reset to
+# zero on every restart (systemd restart included). Durable per-job evidence
+# is in <workdir>/outcomes.jsonl. quarantines_open is read live from disk.
+# Logs go to the journal: journalctl -u vishwas.service -f
+
+[Unit]
+Description=Vishwas WhatsApp verification webhook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+Group=CHANGE_ME
+WorkingDirectory=/home/hermes/vishwas
+ExecStart=/usr/bin/env bash /home/hermes/vishwas/scripts/run_vishwas.sh webhook --port 2785
+Restart=on-failure
+RestartSec=5
+# Never run as root even if someone forgets to set User= above.
+# (DynamicUser=yes is a stricter alternative; it needs a writable
+#  VISHWAS_WORKDIR / VISHWAS_QUARANTINE, so it is opt-in, not default.)
+# Environment=VISHWAS_LOG_LEVEL=INFO
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

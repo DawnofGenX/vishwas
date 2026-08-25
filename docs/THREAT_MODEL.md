@@ -1,6 +1,6 @@
 # Threat Model
 
-Adversary-facing design rationale for VeriSafe. Every control below exists because of a concrete attack class; the P7 red-team battery (`tests/test_09_redteam.py`) is the executable form of this document.
+Adversary-facing design rationale for Vishwas. Every control below exists because of a concrete attack class; the P7 red-team battery (`tests/test_09_redteam.py`) is the executable form of this document.
 
 ## Assets & threat actors
 
@@ -33,13 +33,13 @@ The LLM narrates evidence; it does not decide. Defense-in-depth in `llm_guard.py
 - Detected payloads are quarantined *inside* the fence and flagged; they never leak into the system prompt. Verified property: attacker strings appear in the untrusted block only, never in the instruction span (P7 parametrised 8 variants, all flagged).
 
 ### A4. Poisoning the models/caches
-- **Model weights** are loaded from explicit env-pointed paths (`VERISAFE_*_WEIGHTS`); nothing is downloaded at runtime. Updating = operator-controlled file placement + restart.
+- **Model weights** are loaded from explicit env-pointed paths (`VISHWAS_*_WEIGHTS`); nothing is downloaded at runtime. Updating = operator-controlled file placement + restart.
 - **RAG template cache** (gov-document templates) is a *retrieval cache, not source of truth*: template similarity is one signal among many; a forged doc that matches a cached layout still fails field-level + signature + API checks, and disagreement drops reliability.
-- **Fusion checkpoints** (`VERISAFE_FUSION_DIR`) are retrained via the audited `fusion_train.py` flow (OOF CV + calibration); hand-edits break the schema check at load.
+- **Fusion checkpoints** (`VISHWAS_FUSION_DIR`) are retrained via the audited `fusion_train.py` flow (OOF CV + calibration); hand-edits break the schema check at load.
 
 ### A5. Availability / thermal
 - Hard wall budget per job (default 300s), 10s stage floor, conservative short-circuit after confirmed positives — all three bound worst-case CPU per message (P8).
-- Bounded thread caps (`VERISAFE_FFMPEG_THREADS=2`, heavy pool 2 workers) sized against this machine's documented thermal trip.
+- Bounded thread caps (`VISHWAS_FFMPEG_THREADS=2`, heavy pool 2 workers) sized against this machine's documented thermal trip.
 - Subprocess isolation per capability: one crashing/killing stage can't take down the job or the server.
 
 ### A6. Retention leakage

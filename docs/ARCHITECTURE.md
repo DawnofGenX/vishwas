@@ -1,10 +1,10 @@
-# VeriSafe — Architecture
+# Vishwas — Architecture
 
 **WhatsApp-based deepfake / government-document / malicious-content verification
 platform.** Purpose: give users (especially older, non-technical people) one simple
 channel to check whether something they were sent is fake before they trust it, pay
 from it, submit it, or run it. This document describes the *built* system as it exists
-on disk (`src/verisafe/`, 23 modules) — every claim here is grounded in that code, not
+on disk (`src/vishwas/`, 23 modules) — every claim here is grounded in that code, not
 in aspiration.
 
 ---
@@ -81,7 +81,7 @@ in aspiration.
 | `orchestrator.py` | Glue above: materialise → validate → run tiers → fuse → gate → report → purge | Single entry point `handle_incoming(msg)` |
 | `report.py` | Two-sentence plain-language reply: result + confidence + what-to-do (trust/open/use/avoid) | Human-readable; never exposes internals |
 | `channels.py` | OpenWA transport (real v0.21 API) + in-process CLI simulator | Same code path for both transports |
-| `app.py` | CLI ad-hoc mode + threaded webhook server (`python -m verisafe.app`) | Entry points |
+| `app.py` | CLI ad-hoc mode + threaded webhook server (`python -m vishwas.app`) | Entry points |
 
 ### Capabilities (progressive T0→T1→T2, each a `CapabilityContract`)
 | Capability | Target | What it actually does today | Gated stages |
@@ -101,7 +101,7 @@ so a fresh box runs the whole pipeline in *degraded-but-honest* mode (proven in 
 
 ## 3. Transport: OpenWA (verified, not assumed)
 
-VeriSafe speaks **only** OpenWA for WhatsApp I/O. Verified identity and surface
+Vishwas speaks **only** OpenWA for WhatsApp I/O. Verified identity and surface
 (see `docs/research/VERIFY_SECURITY_STACK.md`):
 
 * Repo `rmyndharis/OpenWA`, MIT, NestJS, **Node 22**, default port **2785**, SQLite.
@@ -138,7 +138,7 @@ verbatim. Deployment (compose + webhook wiring) is documented in `docs/DEPLOYMEN
 ### 4.1 Non-blocking heavy stages (`pending_heavy` follow-ups)
 
 * T2 learned stages (`stage_cost = "heavy"`: AASIST audio, EFFORT video, HAVIC
-  cross-modal) get a per-stage budget (`VERISAFE_HEAVY_STAGE_BUDGET_S`, default 30s).
+  cross-modal) get a per-stage budget (`VISHWAS_HEAVY_STAGE_BUDGET_S`, default 30s).
 * Over budget, the orchestrator stops *waiting*, not the work: the stage keeps running in a
   dedicated **sequential** background pool (`max_workers=1` — heavy inference is never
   parallelized on the CPU-only laptop), and the fast verdict ships immediately with

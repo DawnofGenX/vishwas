@@ -1,6 +1,6 @@
 # Verification & Security Stack — Research & Evidence Note (P1)
 
-**VeriSafe** | generated 2026-08-19 by orchestrator direct verification. Subagent batch
+**Vishwas** | generated 2026-08-19 by orchestrator direct verification. Subagent batch
 deleg_02086fd4 (task 2) died on an upstream 504 before writing its note; every item below
 was re-verified by the orchestrator against primary sources (GitHub, PyPI JSON API,
 live endpoint probes). All claims carry their source inline; anything not verifiable is
@@ -94,7 +94,7 @@ extracted text, with OCSP treated as advisory (many Indian CAs have flaky OCSP).
   personal/coursework repos, e.g. `nbaliyan260/phishllm`). There is no open-weight PhishLLM model, no
   published accuracy table, and no serving recipe to build from — anyone advertising one is pointing at a
   placeholder or a private model. Our `url_phishing.py` gates any LLM-classifier behind
-  `VERISAFE_PHISHLLM_WEIGHTS` **as a future slot** (a genuine phishing-LLM weights drop could land there
+  `VISHWAS_PHISHLLM_WEIGHTS` **as a future slot** (a genuine phishing-LLM weights drop could land there
   later); today that path is inert by design, and the always-on tier is the offline DOM-signal set below.
   Nearest *real* open lines if a model ever gets provisioned: LLaMA/GPT-family fine-tunes from the
   phishing-email-detection literature (e.g. arXiv `2512.10104`, `2502.04759`) — each needs its own
@@ -115,12 +115,12 @@ registration `POST /api/sessions/{sessionId}/webhooks` body props = `url` (**req
 candidate name in the dispatch brief was wrong; rmyndharis is the one. README guidance worth quoting
 in ops docs: use the built-in `RATE_LIMIT_*` limiter ("a few messages/min/session sustainable"),
 prefer opted-in recipients, mind datacenter-IP flagging (per-session proxy supported). MCP tool
-surface exists (`MCP_ENABLED=true` → 25 read-only tools at `POST /mcp`) — not used by VeriSafe.
+surface exists (`MCP_ENABLED=true` → 25 read-only tools at `POST /mcp`) — not used by Vishwas.
 
 - **Repo:** `rmyndharis/OpenWA` (NOT open-wa/openwa*; those names don't exist),
   ★≈13k, **MIT**, Node 22 LTS, NestJS, Docker-native.
 - **Real REST surface (from the project's published `openapi.json`, v0.21.0, 157 paths)** — the
-  VeriSafe-relevant subset:
+  Vishwas-relevant subset:
   - send text: `POST /api/sessions/{sessionId}/messages/send-text` body `{chatId:"E.164@c.us", text}`
   - inbound media bytes: `GET /api/sessions/{sessionId}/messages/{chatId}/{messageId}/media` → application/octet-stream
   - webhooks (per session): `POST /api/sessions/{sessionId}/webhooks` with `{url, events:[...], secret?, headers?}`
@@ -151,6 +151,6 @@ after the job.
 2. ~~Quark-Engine repo move~~ **RESOLVED (second pass):** canonical `ev-flow/quark-engine`; PyPI `quark-engine` v26.8.1 is the install path.
 3. VirusTotal "v4" — **resolved as non-existent** (public API is v3 at www.virustotal.com/api/v3); only the *exact* free-tier quotas remain unverified without an authenticated console.
 4. **PhishLLM — NOT FOUND (confirmed second pass):** no paper, model, dataset, or package by that name anywhere probed. Treated in code as a *future* weights slot, never a real detector.
-5. ~~DigiLocker developer-API specifics~~ **RESOLVED → see `INDIA_GOV_VERIFICATION.md` §1:** old developer hosts dead (NXDOMAIN); e-KYC access is partnership-gated (OAuth per UIDAI/DigiLocker partner agreement) — NO-PUBLIC-API for self-serve; VeriSafe keeps user-assisted QR flow + discovery-only posture.
+5. ~~DigiLocker developer-API specifics~~ **RESOLVED → see `INDIA_GOV_VERIFICATION.md` §1:** old developer hosts dead (NXDOMAIN); e-KYC access is partnership-gated (OAuth per UIDAI/DigiLocker partner agreement) — NO-PUBLIC-API for self-serve; Vishwas keeps user-assisted QR flow + discovery-only posture.
 6. ~~Apisetu sub-docs path~~ **RESOLVED → see `INDIA_GOV_VERIFICATION.md` §2:** legacy `apisetu.api.gov.in`/`apisetu.dev.gov.in` NXDOMAIN; live catalog = `directory.apisetu.gov.in` (`/api/list?q={"query":…}` + single-use bearer from `/api/auth/generate-headers`; Meilisearch `apidirectory_v2`, 2930 orgs). Read-only discovery is account-free; consumer invocation needs partners.apisetu.gov.in OAuth.
 7. CAPE license "NOASSERTION" — review before any non-personal deployment distribution.

@@ -1,10 +1,10 @@
 # User & Operator Guide
 
-How to talk to VeriSafe, what you'll get back, and how operators read the audit trail. Written for non-technical users first; the machinery section is at the bottom.
+How to talk to Vishwas, what you'll get back, and how operators read the audit trail. Written for non-technical users first; the machinery section is at the bottom.
 
 ## For users: just message your file or link
 
-Send **anything** to the WhatsApp number — a link, a photo, an audio note, a video, a scanned document, or a downloaded file. You do **not** need to know what kind of thing it is; VeriSafe identifies it automatically.
+Send **anything** to the WhatsApp number — a link, a photo, an audio note, a video, a scanned document, or a downloaded file. You do **not** need to know what kind of thing it is; Vishwas identifies it automatically.
 
 You will get back, in your own language, three things:
 
@@ -17,7 +17,7 @@ You will get back, in your own language, three things:
 3. **Practical next steps** — what to do with the result (ignore / verify with official source / delete and block sender).
 
 ### Language support
-VeriSafe auto-detects which language you wrote in and replies in the same one. Currently: **English, Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali.** If detection fails it falls back to English.
+Vishwas auto-detects which language you wrote in and replies in the same one. Currently: **English, Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali.** If detection fails it falls back to English.
 
 ### What to never do
 - Don't expect a yes/no on legal/medical/financial decisions — this is a technical-signal tool, not a judge.
@@ -26,7 +26,7 @@ VeriSafe auto-detects which language you wrote in and replies in the same one. C
 
 ## For operators: reading the audit trail
 
-Every job appends one record to `VERISAFE_AUDIT_LOG`:
+Every job appends one record to `VISHWAS_AUDIT_LOG`:
 
 ```
 [HH:MM:SS] job=<id> target=<url_phishing|malicious_file|gov_document|deepfake_video|...> \
@@ -43,6 +43,6 @@ Fields that matter during an incident:
 The full structured evidence (every `CheckResult`) is in `JobOutcome.to_dict()` if you log beyond the summary line.
 
 ### Quick operator runbook (this laptop)
-- Before a bulk/batch run: check `tail ~/.hermes/logs/thermal_power_monitor.log`; keep `VERISAFE_FFMPEG_THREADS=2`; don't overlap other Hermes compute.
-- Watch the quarantine mount size (`df -h $(echo $VERISAFE_QUARANTINE)`). If it grows, the stale-sweep may have failed — the TTL is `VERISAFE_STALE_TTL_S`.
-- To force a clean re-deploy: restart OpenWA, then VeriSafe; webhook self-re-registers on boot.
+- Before a bulk/batch run: check `tail ~/.hermes/logs/thermal_power_monitor.log`; keep `VISHWAS_FFMPEG_THREADS=2`; don't overlap other Hermes compute.
+- Watch the quarantine mount size (`df -h $(echo $VISHWAS_QUARANTINE)`). If it grows, the stale-sweep may have failed — the TTL is `VISHWAS_STALE_TTL_S`.
+- To force a clean re-deploy: restart OpenWA, then Vishwas; webhook self-re-registers on boot.

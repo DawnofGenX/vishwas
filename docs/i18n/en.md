@@ -1,7 +1,7 @@
-# VeriSafe i18n — English corpus (machine-generated)
+# Vishwas i18n — English corpus (machine-generated)
 
 > **Auto-generated** by `scripts/i18n_export.py` from the live
-> `src/verisafe/i18n.py` module (`_DEFAULTS`). Do not hand-edit —
+> `src/vishwas/i18n.py` module (`_DEFAULTS`). Do not hand-edit —
 > re-run the script after any change to the module.
 >
 > English is the authoritative base language. Every other language

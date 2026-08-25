@@ -2,21 +2,21 @@
 
 Ad-hoc verification outputs backing the Phase 1 "learned tier" claims. Every
 number below was produced by a throwaway script in a tempdir (deleted after
-run) against the REAL provisioned weights under `/opt/verisafe/models/` — not
+run) against the REAL provisioned weights under `/opt/vishwas/models/` — not
 by the hermetic test suite. Re-run any check by re-creating the script; the
 commands are recorded per family.
 
 Environment: i5-8250U (15 W), CPU-only, torch 2.13.0+cu130 (CPU path) from
-`/home/hermes/docling-python`, `PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src`.
+`/home/hermes/docling-python`, `PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/vishwas/src`.
 Thermal precheck: max zone 39 °C before work; no undervolt needed.
 
 ---
 
 ## AASIST — HABLA_WavLM_AASIST (deepfake_audio T2) — VENDORED ✅
 
-**Checkpoint:** `/opt/verisafe/models/aasist/best_model.pth`
+**Checkpoint:** `/opt/vishwas/models/aasist/best_model.pth`
 **Provenance:** DeepFense/HABLA_WavLM_AASIST_NoAug_Seed42 (arXiv:2110.01200 lineage)
-**Arch class:** `src/verisafe/model_archs/aasist.py` (`HABLA_WavLM_AASIST`:
+**Arch class:** `src/vishwas/model_archs/aasist.py` (`HABLA_WavLM_AASIST`:
 WavLM-Large 315 M front-end + HtrgGAT trunk), vendored backend in
 `_aasist_backend.py` + `_wavlm/`.
 
@@ -24,8 +24,8 @@ WavLM-Large 315 M front-end + HtrgGAT trunk), vendored backend in
 
 Command:
 ```
-PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
-  python3 /tmp/verisafe-t12-verify/verify_aasist.py
+PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/vishwas/src \
+  python3 /tmp/vishwas-t12-verify/verify_aasist.py
 ```
 
 | Check | Result |
@@ -58,9 +58,9 @@ the env var is unset or the arch is unavailable.
 
 ## EFFORT — spatial face/AIGI detector (deepfake_video T2) — VENDORED ✅
 
-**Checkpoint (primary):** `/opt/verisafe/models/effort/chameleon/effort_chameleon.pth`
+**Checkpoint (primary):** `/opt/vishwas/models/effort/chameleon/effort_chameleon.pth`
 **Provenance:** YZY-stack/Effort-AIGI-Detection, chameleon checkpoint (Decision #2 primary)
-**Arch class:** `src/verisafe/model_archs/effort.py` (`EffortSpec` / `_EffortNet`:
+**Arch class:** `src/vishwas/model_archs/effort.py` (`EffortSpec` / `_EffortNet`:
 CLIP-style ViT-L/14, 303.4 M params, 24 encoder layers, OrthAlign rank-1
 residuals on every self-attn projection). All three checkpoints probed to be
 architecturally identical (681 keys each; same layer-0 and non-layer counts),
@@ -70,8 +70,8 @@ so one spec covers chameleon/ffpp/genimage.
 
 Command:
 ```
-PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
-  python3 /tmp/verisafe-t13/verify_effort.py
+PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/vishwas/src \
+  python3 /tmp/vishwas-t13/verify_effort.py
 ```
 
 | Check | Result |
@@ -126,7 +126,7 @@ CLIP-ViT-L would get wrong: `patch_embedding` has **no bias** and
 `position_embedding.weight`); the `pre_layrnorm` typo is preserved verbatim;
 the `module.` DataParallel prefix is stripped in `apply_state`.
 
-License: CC BY-NC 4.0 — operator opt-in via `VERISAFE_EFFORT_WEIGHTS`;
+License: CC BY-NC 4.0 — operator opt-in via `VISHWAS_EFFORT_WEIGHTS`;
 evidence record carries `"license": "CC-BY-NC-4.0"`.
 
 **Status:** deepfake_video T2 now has a live learned scoring path behind the
@@ -135,19 +135,19 @@ the env var is unset or the arch is unavailable.
 
 ## HAVIC — holistic AV coherence (cross_modal) — VENDORED ✅
 
-**Checkpoint (primary):** `/opt/verisafe/models/havic/best_ft/best_ft_model.pth`
+**Checkpoint (primary):** `/opt/vishwas/models/havic/best_ft/best_ft_model.pth`
 **Provenance:** JielunPeng/HAVIC, arXiv:2603.23960 — **MIT licensed** (no opt-in
 gate needed). `best_ft` = HAVIC_FT finetune payload (456 tensors); `pt200`
 secondary entry in `CHECKPOINT_CHAIN` is a pretrain payload WITHOUT classifier
 heads — apply_state honestly returns False for it (documented limitation; not
 a working scoring fallback).
-**Arch class:** `src/verisafe/model_archs/havic.py` (`HavicArch`, implemented)
+**Arch class:** `src/vishwas/model_archs/havic.py` (`HavicArch`, implemented)
 over vendored backend package `model_archs/_havic/` (copy-adapted reference
 modules + minimal `_timm_shim.py`; timm absent from this tree). One upstream
 bug fixed in the vendored copy: forward passed `use_mask=False` to encoders
 whose signature says `use_hierarchical`.
 **Wiring:** `cross_modal._load_havic()` routes through
-`resolve("VERISAFE_HAVIC_WEIGHTS") -> adapter.load() -> is_usable_model()`;
+`resolve("VISHWAS_HAVIC_WEIGHTS") -> adapter.load() -> is_usable_model()`;
 preprocessing = numpy kaldi-fbank port (validated vs real torchaudio: max abs
 diff ≤5e-4 across sine/speech/noise/short inputs) + 16-frame [0,1] tensor.
 
@@ -155,9 +155,9 @@ diff ≤5e-4 across sine/speech/noise/short inputs) + 16-frame [0,1] tensor.
 
 Command:
 ```
-VERISAFE_HAVIC_WEIGHTS=/opt/verisafe/models/havic/best_ft/best_ft_model.pth \
-PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/verisafe/src \
-  timeout 900 python3 /tmp/verisafe-t14-smoke/verify_havic.py <clip> <workdir>
+VISHWAS_HAVIC_WEIGHTS=/opt/vishwas/models/havic/best_ft/best_ft_model.pth \
+PYTHONPATH=/home/hermes/pylibs:/home/hermes/docling-python:/home/hermes/vishwas/src \
+  timeout 900 python3 /tmp/vishwas-t14-smoke/verify_havic.py <clip> <workdir>
 ```
 
 | Check | Result |
@@ -203,7 +203,7 @@ test_14 + test_21 → 50 passed.
 ## Phase-1 proof bar — E2E CLI evidence (2026-08-21)
 
 Per the roadmap proof bar ("suite green is not enough"): full CLI runs through
-`scripts/run_verisafe.sh cli` with all three weight env vars provisioned,
+`scripts/run_vishwas.sh cli` with all three weight env vars provisioned,
 showing learned scores in the per-check evidence of real pipeline output.
 
 ### Run 1 — audio fixture (`tests/fixtures/audio/smoke_5s.wav`, job_3e9cd7bc63c8)

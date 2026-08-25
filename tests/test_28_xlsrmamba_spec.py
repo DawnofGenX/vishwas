@@ -25,10 +25,10 @@ except Exception as e:
 
 if _TORCH_ERROR is None:
     try:
-        from verisafe.model_adapters import ADAPTERS, _ARCH_FAMILIES, resolve
-        from verisafe.model_archs import get_arch
-        from verisafe.model_archs.base import ArchSpec
-        from verisafe.model_archs.xlsrmamba import (
+        from vishwas.model_adapters import ADAPTERS, _ARCH_FAMILIES, resolve
+        from vishwas.model_archs import get_arch
+        from vishwas.model_archs.base import ArchSpec
+        from vishwas.model_archs.xlsrmamba import (
             XLSRMambaSpec,
             _INPUT_SAMPLES,
             _XLSRMambaNet,
@@ -53,13 +53,13 @@ else:
         spec = get_arch("xlsrmamba")
         assert isinstance(spec, ArchSpec)
         assert spec.name == "xlsrmamba"
-        assert spec.weight_env == "VERISAFE_XLSRMAMBA_WEIGHTS"
+        assert spec.weight_env == "VISHWAS_XLSRMAMBA_WEIGHTS"
         assert spec.implemented is True
 
     def test_adapter_row_registered():
-        assert "VERISAFE_XLSRMAMBA_WEIGHTS" in ADAPTERS
-        assert _ARCH_FAMILIES.get("VERISAFE_XLSRMAMBA_WEIGHTS") == "xlsrmamba"
-        adapter = resolve("VERISAFE_XLSRMAMBA_WEIGHTS")
+        assert "VISHWAS_XLSRMAMBA_WEIGHTS" in ADAPTERS
+        assert _ARCH_FAMILIES.get("VISHWAS_XLSRMAMBA_WEIGHTS") == "xlsrmamba"
+        adapter = resolve("VISHWAS_XLSRMAMBA_WEIGHTS")
         assert adapter is not None and adapter.family == "audio"
 
     # ---------------------------------------------------------- skeleton --
@@ -83,7 +83,7 @@ else:
         """Real vendored MixerModel at reduced depth — exercises the actual
         Mamba path (selective-scan shim, flip column, pooling) cheaply while
         keeping d_model=144 so the net's LL/first_bn widths line up."""
-        from verisafe.model_archs._xlsrmamba_vendor.mamba_backend import MixerModel
+        from vishwas.model_archs._xlsrmamba_vendor.mamba_backend import MixerModel
 
         kw.pop("ssm_cfg", None)
         kw["d_model"] = 144
@@ -136,7 +136,7 @@ else:
 
     # --------------------------------------------------------------- score --
     def test_score_pads_and_returns_calibrated_probability(tiny_net, monkeypatch):
-        import verisafe.model_archs.xlsrmamba as mod
+        import vishwas.model_archs.xlsrmamba as mod
 
         seen = {}
 

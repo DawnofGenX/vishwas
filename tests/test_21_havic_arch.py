@@ -11,7 +11,7 @@ metadata-only probe fixture ``fixtures/havic_best_ft_key_shapes.txt``
 (456 keys + shapes from best_ft_model.pth, probed without torch.load).
 The single score() forward uses random weights on a batch of one; it proves
 the plumbing, not detection quality (polarity is assumption H5 — see
-verisafe/model_archs/havic.py).
+vishwas/model_archs/havic.py).
 """
 from __future__ import annotations
 
@@ -28,10 +28,10 @@ except Exception as e:
 
 if _TORCH_ERROR is None:
     try:
-        from verisafe.model_archs import get_arch
-        from verisafe.model_archs.havic import CHECKPOINT_CHAIN, HavicArch
-        from verisafe.model_archs.base import ArchSpec
-        from verisafe.model_archs._havic._timm_shim import Attention, DropPath, Mlp
+        from vishwas.model_archs import get_arch
+        from vishwas.model_archs.havic import CHECKPOINT_CHAIN, HavicArch
+        from vishwas.model_archs.base import ArchSpec
+        from vishwas.model_archs._havic._timm_shim import Attention, DropPath, Mlp
         _ARCH_ERROR = None
     except Exception as e:  # torch present but arch not vendored -> RED
         _ARCH_ERROR = f"{type(e).__name__}: {e}"
@@ -86,7 +86,7 @@ else:
         assert isinstance(spec, ArchSpec)
         assert isinstance(spec, HavicArch)
         assert spec.name == "havic"
-        assert spec.weight_env == "VERISAFE_HAVIC_WEIGHTS"
+        assert spec.weight_env == "VISHWAS_HAVIC_WEIGHTS"
         assert getattr(spec, "implemented", False) is True
         assert CHECKPOINT_CHAIN == ("best_ft", "pt200")
 

@@ -1,6 +1,6 @@
-# VeriSafe + OpenWA single-box deployment (Roadmap T4.4).
+# Vishwas + OpenWA single-box deployment (Roadmap T4.4).
 #
-#   WhatsApp ⇄ openwa (REST :2785, container-internal) ⇄ verisafe webhook (:2785,
+#   WhatsApp ⇄ openwa (REST :2785, container-internal) ⇄ vishwas webhook (:2785,
 #   container-internal, route POST /webhook/inbound, health GET /health).
 #
 # Bring-up, webhook registration and the operator checklist live in
@@ -13,7 +13,7 @@
 # without explicit operator review — every inbound message is analyzed and
 # replied to by the pipeline once pairing is live.
 
-name: verisafe
+name: vishwas
 
 services:
   openwa:
@@ -23,7 +23,7 @@ services:
     image: rmyndharis/openwa:0.21.0
     restart: unless-stopped
     environment:
-      # REST auth — VeriSafe's client sends it as X-API-Key (channels.py::_req).
+      # REST auth — Vishwas's client sends it as X-API-Key (channels.py::_req).
       # REQUIRED: put it in deploy/.env (chmod 600); generate with:
       #   openssl rand -hex 32
       API_KEY: ${OPENWA_API_KEY:?set OPENWA_API_KEY in deploy/.env}
@@ -32,13 +32,13 @@ services:
       - ./openwa-data:/data                # session persistence across restarts
     ports:
       # Host-loopback only, for operator curl of the REST API. Container-to-
-      # container traffic (verisafe -> openwa) uses the compose network and
+      # container traffic (vishwas -> openwa) uses the compose network and
       # ignores published ports entirely.
       - "127.0.0.1:2785:2785"
     # NOTE: no public ingress anywhere — OpenWA pushes webhook events OUT to
-    # verisafe over the compose network; replies go back via REST send-text.
+    # vishwas over the compose network; replies go back via REST send-text.
 
-  verisafe:
+  vishwas:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -46,7 +46,7 @@ services:
     depends_on:
       - openwa
     environment:
-      # --- OpenWA client wiring (names read by src/verisafe/channels.py) ---
+      # --- OpenWA client wiring (names read by src/vishwas/channels.py) ---
       OPENWA_BASE_URL: http://openwa:2785
       OPENWA_SESSION_ID: main              # default session after first QR pairing
       OPENWA_API_KEY: ${OPENWA_API_KEY:-}  # MUST match openwa.API_KEY above
@@ -54,26 +54,26 @@ services:
       # ACCEPTS UNSIGNED deliveries — documented air-gapped-only choice; set it
       # (same value OpenWA registers, see deploy/webhook.example.json).
       OPENWA_WEBHOOK_SECRET: ${OPENWA_WEBHOOK_SECRET:-}
-      # --- webhook server (src/verisafe/app.py main_webhook) ---
-      VERISAFE_WEBHOOK_HOST: 0.0.0.0
-      VERISAFE_WEBHOOK_PORT: "2785"        # matches the --port below
+      # --- webhook server (src/vishwas/app.py main_webhook) ---
+      VISHWAS_WEBHOOK_HOST: 0.0.0.0
+      VISHWAS_WEBHOOK_PORT: "2785"        # matches the --port below
       # --- resource / path wiring ---
-      VERISAFE_FFMPEG_THREADS: "2"         # thermal-safe cap (i5-8250U-class)
-      VERISAFE_QUARANTINE: /var/lib/verisafe/quarantine
-      VERISAFE_AUDIT_LOG: /var/log/verisafe/audit.log
-      VERISAFE_WORKDIR: /tmp/verisafe-work
-      VERISAFE_MODELS_DIR: /opt/verisafe/models
+      VISHWAS_FFMPEG_THREADS: "2"         # thermal-safe cap (i5-8250U-class)
+      VISHWAS_QUARANTINE: /var/lib/vishwas/quarantine
+      VISHWAS_AUDIT_LOG: /var/log/vishwas/audit.log
+      VISHWAS_WORKDIR: /tmp/vishwas-work
+      VISHWAS_MODELS_DIR: /opt/vishwas/models
       # Optional capability gates — leave unset until provisioned:
-      # VERISAFE_VT_API_KEY: ...
-      # VERISAFE_LLM_BASE_URL / VERISAFE_LLM_API_KEY / VERISAFE_LLM_MODEL: ...
+      # VISHWAS_VT_API_KEY: ...
+      # VISHWAS_LLM_BASE_URL / VISHWAS_LLM_API_KEY / VISHWAS_LLM_MODEL: ...
     volumes:
       # Model weights stay host-side and read-only; the container never writes
-      # here. Override the host side with VERISAFE_MODELS_HOST_DIR in .env
-      # (e.g. /home/hermes/verisafe-models). Absent gates are skipped safely by
+      # here. Override the host side with VISHWAS_MODELS_HOST_DIR in .env
+      # (e.g. /home/hermes/vishwas-models). Absent gates are skipped safely by
       # the provisioning script.
-      - ${VERISAFE_MODELS_HOST_DIR:-../models}:/opt/verisafe/models:ro
-      - ./quarantine:/var/lib/verisafe/quarantine
-      - ./logs:/var/log/verisafe           # audit log (VERISAFE_AUDIT_LOG)
+      - ${VISHWAS_MODELS_HOST_DIR:-../models}:/opt/vishwas/models:ro
+      - ./quarantine:/var/lib/vishwas/quarantine
+      - ./logs:/var/log/vishwas           # audit log (VISHWAS_AUDIT_LOG)
     # Provision weight env vars from the mounted models dir (no-op when the
     # mount is empty), then hand off to the standard launcher. "$$" escapes
     # compose interpolation so the shell inside the container sees "$(...)".
@@ -81,7 +81,7 @@ services:
       - bash
       - -c
       - eval "$$(bash scripts/provision_weight_env.sh --quiet)";
-        exec bash scripts/run_verisafe.sh webhook --port 2785
+        exec bash scripts/run_vishwas.sh webhook --port 2785
     healthcheck:
       # Rich JSON ops snapshot (status/uptime/jobs/quarantines/deps).
       test: ["CMD", "curl", "-fsS", "http://localhost:2785/health"]

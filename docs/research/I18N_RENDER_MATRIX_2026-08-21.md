@@ -2,7 +2,7 @@
 
 Evidence for roadmap Phase 3 closeout (language-safety tests).
 Rendered through the REAL `ReportBuilder.build` path
-(src/verisafe/report.py) at sample confidence 0.90 -> band `high`,
+(src/vishwas/report.py) at sample confidence 0.90 -> band `high`,
 target `gov_document` (no domain tip), empty checks list.
 
 **Status note:** `hi` is best-effort machine output and

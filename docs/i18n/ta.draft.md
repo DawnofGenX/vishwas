@@ -1,4 +1,4 @@
-# VeriSafe i18n — Tamil (ta) draft
+# Vishwas i18n — Tamil (ta) draft
 
 > **DRAFT — pending native review.** Do NOT merge into `i18n._DEFAULTS`
 > until a native reviewer (the DawnofGenX gate) signs off or corrects each line.

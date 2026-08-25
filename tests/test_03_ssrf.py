@@ -10,7 +10,7 @@ import ipaddress
 
 import pytest
 
-from verisafe.url_guard import (
+from vishwas.url_guard import (
     _ip_categories,
     SsrfBlocked,
     normalize_url,
@@ -79,7 +79,7 @@ def test_normalize_keeps_port_and_path():
 def test_dns_resolve_safe_blocks_all_loopback(monkeypatch):
     """If *every* resolved address is non-public, SsrfBlocked must be raised."""
     import socket
-    import verisafe.url_guard as ug
+    import vishwas.url_guard as ug
 
     def fake_getaddrinfo(host, port=None, *a, **k):
         if host == "evil-loop.internal":
@@ -92,7 +92,7 @@ def test_dns_resolve_safe_blocks_all_loopback(monkeypatch):
 
 def test_dns_resolve_safe_passes_public(monkeypatch):
     import socket
-    import verisafe.url_guard as ug
+    import vishwas.url_guard as ug
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k:
         [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))])
     ips = ug.dns_resolve_safe("pub.example.com")

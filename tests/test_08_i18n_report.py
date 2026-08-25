@@ -8,9 +8,9 @@ degrade to English rather than crash.
 """
 from __future__ import annotations
 
-from verisafe.i18n import t, detect_language, _SUPPORTED
-from verisafe.report import ReportBuilder
-from verisafe.events import Verdict
+from vishwas.i18n import t, detect_language, _SUPPORTED
+from vishwas.report import ReportBuilder
+from vishwas.events import Verdict
 
 
 def test_supported_languages_cover_design_set():
@@ -83,7 +83,7 @@ def test_hi_report_returns_translated_or_bilingual_string_not_empty():
 
 
 def test_confidence_band_labels_consistent_ordering():
-    from verisafe.report import _band
+    from vishwas.report import _band
     order = [_band(c) for c in (0.10, 0.40, 0.65, 0.90)]
     assert len(order) == 4
     # higher confidence -> stronger wording index (monotonic labels)
@@ -94,7 +94,7 @@ def test_confidence_band_labels_consistent_ordering():
 # PHASE 3 — i18n completion guarantees (roadmap Tasks 3.1 step 5 / 3.2)
 # ====================================================================
 #
-# Design (per .hermes/plans/2026-08-20_222933-verisafe-full-roadmap.md):
+# Design (per .hermes/plans/2026-08-20_222933-vishwas-full-roadmap.md):
 #
 #  * REVIEWED_LANGUAGES declares which languages have passed the
 #    native-review gate (DawnofGenX sign-off). STILL INTENTIONALLY EMPTY
@@ -113,7 +113,7 @@ def test_confidence_band_labels_consistent_ordering():
 #  * A language with NO own string for a key (post-merge, none of the 7
 #    has one — the branch stays for any future key added without a draft)
 #    intentionally FALLS BACK TO ENGLISH. That is BY DESIGN (see
-#    src/verisafe/i18n.py docstring; zero-cloud project — there is no
+#    src/vishwas/i18n.py docstring; zero-cloud project — there is no
 #    hidden auto-translation), and these tests assert that behaviour
 #    explicitly rather than treating it as a failure. Note: the module's
 #    t() swallows % formatting errors, so when a caller omits a required
@@ -139,8 +139,8 @@ from pathlib import Path as _Path
 
 import pytest
 
-import verisafe.i18n as _i18n_mod
-from verisafe.i18n import _DEFAULTS
+import vishwas.i18n as _i18n_mod
+from vishwas.i18n import _DEFAULTS
 
 _DOC_I18N = _Path(__file__).resolve().parent.parent / "docs" / "i18n"
 

@@ -40,14 +40,14 @@ class _FakeOrch:
 
 
 def _make_processor(tmp_path, orch):
-    from verisafe.channels import MessageProcessor
+    from vishwas.channels import MessageProcessor
     return MessageProcessor(orch, openwa=None, persist_outcomes=False,
                             workdir=tmp_path / "work")
 
 
 def _invoke_health_get(proc, deps=()):
     """Call WebhookHandler.do_GET('/health') directly against a BytesIO wfile."""
-    from verisafe.app import WebhookHandler
+    from vishwas.app import WebhookHandler
     h = WebhookHandler.__new__(WebhookHandler)   # skip socket/stdio wiring
     h.path = "/health"
     h.requestline = "GET /health HTTP/1.0"
@@ -68,7 +68,7 @@ def _invoke_health_get(proc, deps=()):
 # ------------------------------------------------- rich /health payload -----
 
 def test_health_payload_keys_and_types(tmp_path):
-    from verisafe.app import health_snapshot
+    from vishwas.app import health_snapshot
     proc = _make_processor(tmp_path, _FakeOrch())
     payload = _invoke_health_get(proc, deps={"vt", "llm"})
 
@@ -93,7 +93,7 @@ def test_health_payload_keys_and_types(tmp_path):
 
 def test_health_uptime_is_number_and_nonnegative(tmp_path):
     import time as _time
-    from verisafe.app import health_snapshot
+    from vishwas.app import health_snapshot
     proc = _make_processor(tmp_path, _FakeOrch())
     seen = []
     for _ in range(3):
@@ -107,8 +107,8 @@ def test_health_uptime_is_number_and_nonnegative(tmp_path):
 
 
 def test_health_quarantines_open_counts_job_dirs(tmp_path, monkeypatch):
-    import verisafe.quarantine as q
-    from verisafe.app import health_snapshot
+    import vishwas.quarantine as q
+    from vishwas.app import health_snapshot
 
     # direct: only subdirectories count, files ignored, missing root -> 0
     root = tmp_path / "q"
@@ -128,7 +128,7 @@ def test_health_quarantines_open_counts_job_dirs(tmp_path, monkeypatch):
 
 
 def test_health_404_for_unknown_paths(tmp_path):
-    from verisafe.app import WebhookHandler
+    from vishwas.app import WebhookHandler
     h = WebhookHandler.__new__(WebhookHandler)
     h.path = "/nope"
     h.requestline = "GET /nope HTTP/1.0"
@@ -164,7 +164,7 @@ def test_counters_increment_on_ok_and_failed_outcomes(tmp_path):
 
 
 def test_counters_thread_safe_under_contention():
-    from verisafe.channels import JobCounters
+    from vishwas.channels import JobCounters
     c = JobCounters()
     N_THREADS, N_ITERS = 8, 400
 
@@ -185,7 +185,7 @@ def test_counters_thread_safe_under_contention():
 
 def test_counter_reset_semantics_documented():
     """Counters are in-memory: a fresh processor starts at zero (restart sim)."""
-    from verisafe.channels import JobCounters
+    from vishwas.channels import JobCounters
     c = JobCounters()
     c.record_started(); c.record_ok(); c.record_failed()
     fresh = JobCounters()   # what a restarted process holds

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# provision_weight_env.sh — idempotent pointer-setter for VeriSafe model weights.
+# provision_weight_env.sh — idempotent pointer-setter for Vishwas model weights.
 #
-# Scans /opt/verisafe/models (override with VERISAFE_MODELS_DIR) and prints
-# `export VERISAFE_<GATE>_WEIGHTS=<path>` lines for every gate whose primary
+# Scans /opt/vishwas/models (override with VISHWAS_MODELS_DIR) and prints
+# `export VISHWAS_<GATE>_WEIGHTS=<path>` lines for every gate whose primary
 # artefact exists, plus a summary table. Absent gates are skipped (printed as
 # 'absent') so sourcing this in a fresh environment is always safe.
 #
@@ -12,20 +12,20 @@
 #   bash scripts/provision_weight_env.sh            # table + exports (human view)
 set -u
 
-MODELS_DIR="${VERISAFE_MODELS_DIR:-/opt/verisafe/models}"
+MODELS_DIR="${VISHWAS_MODELS_DIR:-/opt/vishwas/models}"
 QUIET=0
 [ "${1:-}" = "--quiet" ] && QUIET=1
 
 # gate env var | primary relative path | alternates (relative, space-sep)
 GATES=(
-  "VERISAFE_AASIST_WEIGHTS|aasist/best_model.pth|"
-  "VERISAFE_EFFORT_WEIGHTS|effort/chameleon/effort_chameleon.pth|effort/ffpp/effort_ffpp.pth effort/genimage/effort_genimage.pth"
-  "VERISAFE_HAVIC_WEIGHTS|havic/best_ft/best_ft_model.pth|havic/pt200/pt_model.200.pth"
-  "VERISAFE_XLSRMAMBA_WEIGHTS|xlsr-mamba/model.safetensors|"
-  "VERISAFE_DEMAMBA_WEIGHTS||"
-  "VERISAFE_FAKEMAMBA_WEIGHTS||"
-  "VERISAFE_SSL_AUDIO_WEIGHTS||"
-  "VERISAFE_IMAGE_FACE_WEIGHTS||"
+  "VISHWAS_AASIST_WEIGHTS|aasist/best_model.pth|"
+  "VISHWAS_EFFORT_WEIGHTS|effort/chameleon/effort_chameleon.pth|effort/ffpp/effort_ffpp.pth effort/genimage/effort_genimage.pth"
+  "VISHWAS_HAVIC_WEIGHTS|havic/best_ft/best_ft_model.pth|havic/pt200/pt_model.200.pth"
+  "VISHWAS_XLSRMAMBA_WEIGHTS|xlsr-mamba/model.safetensors|"
+  "VISHWAS_DEMAMBA_WEIGHTS||"
+  "VISHWAS_FAKEMAMBA_WEIGHTS||"
+  "VISHWAS_SSL_AUDIO_WEIGHTS||"
+  "VISHWAS_IMAGE_FACE_WEIGHTS||"
 )
 
 table() { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }   # table rows only; exports always print

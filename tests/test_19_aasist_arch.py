@@ -24,14 +24,14 @@ except Exception as e:
 
 if _TORCH_ERROR is None:
     try:
-        from verisafe.model_archs import get_arch
-        from verisafe.model_archs.aasist import (
+        from vishwas.model_archs import get_arch
+        from vishwas.model_archs.aasist import (
             AASISTSpec,
             _AASISTNet,
             _INPUT_SAMPLES,
             _aasist_wav_preprocess,
         )
-        from verisafe.model_archs.base import ArchSpec
+        from vishwas.model_archs.base import ArchSpec
         _ARCH_ERROR = None
     except Exception as e:  # torch present but arch not vendored -> RED
         _ARCH_ERROR = f"{type(e).__name__}: {e}"
@@ -71,7 +71,7 @@ else:
     @pytest.fixture()
     def tiny_net(monkeypatch):
         """Real _AASISTNet with the WavLM front-end swapped for _FakeWavLM."""
-        import verisafe.model_archs.aasist as mod
+        import vishwas.model_archs.aasist as mod
         monkeypatch.setattr(mod, "WavLM", _FakeWavLM)
         net = _AASISTNet()
         net.eval()
@@ -82,7 +82,7 @@ else:
         spec = get_arch("aasist")
         assert isinstance(spec, ArchSpec)
         assert spec.name == "aasist"
-        assert spec.weight_env == "VERISAFE_AASIST_WEIGHTS"
+        assert spec.weight_env == "VISHWAS_AASIST_WEIGHTS"
 
     # ---------------------------------------------------------------- build --
     def test_build_returns_usable_skeleton(tiny_net):
@@ -94,7 +94,7 @@ else:
         assert tuple(tiny_net.losses[0].fc.weight.shape) == (2, 160)
 
     def test_build_eval_mode(spec, monkeypatch):
-        import verisafe.model_archs.aasist as mod
+        import vishwas.model_archs.aasist as mod
         monkeypatch.setattr(mod, "WavLM", _FakeWavLM)
         net = spec.build()
         assert not net.training  # inference-only usage (assumption A7)
