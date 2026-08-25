@@ -96,12 +96,20 @@ class DeepfakeVideoCapability:
 
     # ----------------------------------------------------------- heuristics
     def _spatial_heuristics(self, frames: list[Path]) -> list[CheckResult]:
-        """Cheap pixel-domain tells, deterministic, zero external deps."""
+        """Cheap pixel-domain tells, deterministic, zero external deps.
+
+        Unit fix (2026-08-25, operator-video incident): _read_gray returns
+        [0,1] floats, but these thresholds (flicker_std/max(2,mean), gx>30)
+        were written for 0-255 8-bit data. On normalized frames the int16 cast
+        truncated everything to {0,1} -> all signals pinned at 0.0 forever,
+        which zeroed the frame-heuristics fusion weight and forced detector
+        disagreement on every real video. Scale to 0-255 before measuring.
+        """
         blobs: list[np.ndarray] = []
         for fp in frames:
             arr = _read_gray(fp)
             if arr is not None:
-                blobs.append(arr)
+                blobs.append(arr.astype(np.float32) * 255.0)  # back to 8-bit scale
         if len(blobs) < 3:
             return [CheckResult("frame_heuristics", "mid", "degraded", {},
                                 "too few decodable frames for pixel-domain signals")]
