@@ -19,6 +19,10 @@ _FAMILIES = {
     # RawBMamba fills the pipeline's Mamba slot (deepfake_audio calls it
     # 'fakemamba'); see model_archs/fakemamba.py provenance header.
     "fakemamba": "fakemamba",
+    # XLSR-Mamba-LA (arXiv 2411.10027, MIT) — wav2vec2-XLSR frontend +
+    # bidirectional Mamba backend; see model_archs/xlsrmamba.py provenance
+    # header.
+    "xlsrmamba": "xlsrmamba",
 }
 
 

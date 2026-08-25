@@ -203,6 +203,8 @@ _ARCH_FAMILIES = {
     "VERISAFE_HAVIC_WEIGHTS": "havic",
     # RawBMamba fills the 'fakemamba' family (see model_archs/fakemamba.py).
     "VERISAFE_FAKEMAMBA_WEIGHTS": "fakemamba",
+    # XLSR-Mamba-LA (MIT) — see model_archs/xlsrmamba.py.
+    "VERISAFE_XLSRMAMBA_WEIGHTS": "xlsrmamba",
 }
 
 ARCH_UNAVAILABLE_REASON = "weight file loaded but architecture unavailable"
@@ -542,6 +544,22 @@ ADAPTERS: dict[str, Adapter] = {
         # last_reason, and T2 falls back to its heuristic features unchanged.
         _load=lambda p: _arch_aware_load(
             p, "aasist", env_name="VERISAFE_AASIST_WEIGHTS"),
+    ),
+    "VERISAFE_XLSRMAMBA_WEIGHTS": Adapter(
+        env_name="VERISAFE_XLSRMAMBA_WEIGHTS",
+        family="audio",
+        # XLSR-Mamba-LA (MIT, arXiv 2411.10027) wants a RAW 16 kHz waveform;
+        # the learned arch (model_archs.xlsrmamba) repeat-tiles to the trained
+        # 66800-sample window inside score(); _waveform_preprocess just decodes
+        # to PCM. 2026-08-24: routed through the arch-aware seam so a
+        # provisioned checkpoint loads as a READY ArchModelWrapper (.predict/
+        # .score -> calibrated spoof posterior). Env unset / arch unavailable
+        # -> None + last_reason, sibling detectors unchanged. Replaces
+        # RawBMamba as the Mamba-slot primary (that gate stays as fallback).
+        preprocess=_waveform_preprocess,
+        extract_prob=_auto_extract,
+        _load=lambda p: _arch_aware_load(
+            p, "xlsrmamba", env_name="VERISAFE_XLSRMAMBA_WEIGHTS"),
     ),
     "VERISAFE_SSL_AUDIO_WEIGHTS": Adapter(
         env_name="VERISAFE_SSL_AUDIO_WEIGHTS",
