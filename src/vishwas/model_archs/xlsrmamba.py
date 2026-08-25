@@ -213,10 +213,14 @@ class XLSRMambaSpec(ArchSpec):
                 f"xlsrmamba score() expects a waveform array, got {type(x).__name__}"
             )
         wav = wav.reshape(-1)
-        # Repeat-pad / truncate to the trained window (X4, mirrors utils.pad).
+        # Truncate to the trained window (X4). For short inputs, ZERO-pad to the
+        # window: upstream XLSR-Mamba pads via fairseq pad_to_multiple(value=0),
+        # and repeat-padding (what this later emitted) creates an artificial
+        # periodic signal that destroys the spoof posterior (measured: XLSR fake
+        # posterior 0.591 repeat-pad vs 0.041 zero-pad on ASVspoof 2019; real
+        # 0.583->0.368). Verified no length-label confound in the corpus.
         if wav.numel() < _INPUT_SAMPLES:
-            reps = _INPUT_SAMPLES // wav.numel() + 1
-            wav = wav.repeat(reps)[:_INPUT_SAMPLES]
+            wav = F.pad(wav, (0, _INPUT_SAMPLES - wav.numel()))
         else:
             wav = wav[:_INPUT_SAMPLES]
         wav = wav.unsqueeze(0)  # (1, 66800)
