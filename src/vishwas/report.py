@@ -45,6 +45,11 @@ class ReportBuilder:
         # when we have the least evidence (the assured-on-empty-evidence class).
         parts = [t(key, lang)]
         n_ran = sum(1 for c in checks if c.status in ("ok", "degraded"))
+        # Fusion v2: surface the deepfake pattern explanation if one fired.
+        pat = next((r.split(":", 1)[1] for r in reasons
+                    if r.startswith("pattern:")), None)
+        if pat and not pat.startswith("_") and t(f"pattern_{pat}", lang):
+            parts.append(t(f"pattern_{pat}", lang))
         if verdict is not Verdict.UNABLE_TO_VERIFY:
             band = _band(confidence)
             parts.append(t("confidence_line", lang, conf=band))
