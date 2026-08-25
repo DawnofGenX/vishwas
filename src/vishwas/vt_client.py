@@ -200,9 +200,50 @@ def get_client() -> VtClient:
     return _default_client
 
 
+# --- TTL cache (2026-08-25): free tier is 500 req/day; the same file/URL gets
+# re-forwarded by users constantly. Cache key = kind + identifier; value =
+# VtResult. Honors only status='ok' results (never cache transport failures).
+_CACHE_TTL_S = int(os.environ.get("VISHWAS_VT_CACHE_TTL_S", 6 * 3600))
+_CACHE_MAX = 512
+_vt_cache: dict[str, tuple[float, VtResult]] = {}
+
+
+def _cache_get(key: str) -> VtResult | None:
+    hit = _vt_cache.get(key)
+    if not hit:
+        return None
+    ts, res = hit
+    if time.time() - ts > _CACHE_TTL_S:
+        _vt_cache.pop(key, None)
+        return None
+    return res
+
+
+def _cache_put(key: str, res: VtResult) -> None:
+    if len(_vt_cache) >= _CACHE_MAX:
+        # drop oldest ~10% (dict preserves insertion order)
+        for k in list(_vt_cache)[: max(1, _CACHE_MAX // 10)]:
+            _vt_cache.pop(k, None)
+    _vt_cache[key] = (time.time(), res)
+
+
 def check_url(url: str) -> VtResult:
-    return get_client().check_url(url)
+    key = "url:" + url
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    res = get_client().check_url(url)
+    if res.status == "ok":
+        _cache_put(key, res)
+    return res
 
 
 def check_hash(sha256: str) -> VtResult:
-    return get_client().check_hash(sha256)
+    key = "hash:" + sha256
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    res = get_client().check_hash(sha256)
+    if res.status == "ok":
+        _cache_put(key, res)
+    return res
