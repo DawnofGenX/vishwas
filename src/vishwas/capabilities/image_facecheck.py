@@ -65,6 +65,25 @@ def _spectral_band_anomaly(img: np.ndarray) -> float:
 class ImageFaceCheckCapability:
     requires: tuple[str, ...] = ()
 
+    # QR evidence for photographed gov IDs (gap fix 2026-08-25): the QR
+    # verifier lives in GovDocumentCapability, which photo'd IDs never reach
+    # (they route here). When the filename carries gov hints, borrow that
+    # check so aadhaar.jpg etc. get qr_payload_check evidence too.
+    _gov_hints = None
+
+    def _qr_evidence_for_gov_image(self, art: Artifact) -> list[CheckResult]:
+        if ImageFaceCheckCapability._gov_hints is None:
+            from ..router import _GOV_HINTS
+            ImageFaceCheckCapability._gov_hints = _GOV_HINTS
+        name = (art.original_filename or "").lower()
+        if not ImageFaceCheckCapability._gov_hints.search(name):
+            return []
+        try:
+            from .gov_document import GovDocumentCapability
+            return GovDocumentCapability()._qr_payload_checks(art)
+        except Exception:  # noqa: BLE001 — QR is additive evidence, never fatal
+            return []
+
     def analyze(self, art: Artifact, ctx: JobContext) -> list[CheckResult]:
         out: list[CheckResult] = []
         kind = art.verified_kind
@@ -81,6 +100,7 @@ class ImageFaceCheckCapability:
         if img is None:
             out.append(CheckResult("image_face_forensics", "mid", "degraded", {},
                                    "could not decode pixel data with available decoders"))
+            out.extend(self._qr_evidence_for_gov_image(art))
             return out
         anomaly = _spectral_band_anomaly(img)
         out.append(CheckResult("frequency_band_analysis", "mid", "ok",
@@ -109,6 +129,7 @@ class ImageFaceCheckCapability:
             except Exception as e:  # noqa: BLE001
                 out.append(CheckResult("image_face_forensics", "heavy", "failed",
                                        {"error_class": e.__class__.__name__}, "inference error"))
+        out.extend(self._qr_evidence_for_gov_image(art))
         return out
 
 
