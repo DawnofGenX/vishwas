@@ -31,7 +31,10 @@ KEY-MAP ASSUMPTIONS (honesty rule — every non-obvious reconstruction choice):
       (encoder_layers=24, embed=1024, ffn=4096, heads=16, conv_pos=128/16
       groups, gru_rel_pos=True, num_buckets=320, max_distance=1280,
       conv_feature_layers=[(512,10,5)]+[(512,3,2)]*4+[(512,2,2)]*2) — verified
-      against probed tensor shapes, not guessed.
+      against probed tensor shapes, not guessed. EXCEPTION: layer_norm_first is
+      boolean and shape-invisible; it comes from WavLM-Large.pt's stored cfg
+      (=True, stable-layer-norm prenorm) — see _wavlm_large_config comment.
+      Setting it False made the detector fully input-invariant (fixed 2026-08-25).
   A3. Backend = verbatim copy of deepfense models/backends/aasist.py
       (Apache-2.0) with framework imports stripped; default dims
       (filts [70,[1,32],[32,32],[32,64],[64,64]], gat_dims [64,32],
@@ -76,7 +79,16 @@ def _wavlm_large_config() -> WavLMConfig:
         "encoder_ffn_embed_dim": 4096,
         "encoder_attention_heads": 16,
         "activation_fn": "gelu",
-        "layer_norm_first": False,
+        # PRE-NORM ("stable layer norm") — matches WavLM-Large.pt's stored cfg,
+        # which the unilm/fairseq loader reads FROM THE CHECKPOINT (deepfense
+        # built its frontend via fairseq checkpoint_utils.load_model_ensemble,
+        # so the trained weights assume prenorm). With False (post-norm) the
+        # residual stream collapses: LN-after-residual erases each layer's
+        # input-dependent contribution faster than attention re-injects it,
+        # and every input produced the identical 0.9972 spoof posterior.
+        # Ground truth: ckpt ships TRAINED frontend.model.encoder.layer_norm.*
+        # (mean gain 0.218), executed only on the prenorm path.
+        "layer_norm_first": True,
         "conv_feature_layers": "[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2",
         "conv_bias": False,
         "feature_grad_mult": 1.0,
@@ -170,13 +182,20 @@ class AASISTSpec(ArchSpec):
         else:
             wav = wav[:_INPUT_SAMPLES]
         wav = wav.unsqueeze(0)  # (1, 64000)
+        # arch seam may hand us ArchModelWrapper or the raw net — unwrap once
+        inner = getattr(model, "model", model)
         try:
-            dev = next(model.parameters()).device
+            dev = next(inner.parameters()).device
             wav = wav.to(dev)   # follow wherever build() placed the model
-        except StopIteration:
+        except (StopIteration, AttributeError):
             pass                # parameterless stub: nothing to align
+        was_training = getattr(inner, "training", False)
+        if hasattr(inner, "eval"):
+            inner.eval()
         with torch.no_grad():
-            logits = model(wav)
+            logits = inner(wav)
+        if was_training and hasattr(inner, "train"):
+            inner.train()
         probs = F.softmax(logits, dim=-1)
         return float(probs[0, 0].item())  # index 0 == spoof class
 

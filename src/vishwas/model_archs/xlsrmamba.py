@@ -14,9 +14,10 @@ Paper      : "XLSR-Mamba: A Dual-Column Bidirectional State Space Model for
              0.93% / DF 1.88% / In-the-Wild 6.71%.
 
 ARCHITECTURE (verified against probed checkpoint shapes, not guessed):
-  * ssl_model : fairseq wav2vec2 XLSR-300M frontend (24-layer post-norm
-    transformer, embed 1024 / ffn 4096 / heads 16, conv_pos 128 groups 16,
-    extractor_mode "layer_norm", conv_bias False, quantizer 320 vars x 2
+  * ssl_model : fairseq wav2vec2 XLSR-300M frontend (24-layer stable-layer-norm
+    PRE-norm transformer — do_stable_layer_norm=true in the canonical config,
+    see the _SSL_CFG_OVERRIDES note; embed 1024 / ffn 4096 / heads 16,
+    conv_pos 128 groups 16, extractor_mode "layer_norm", quantizer 320 vars x 2
     groups -> latent 384). Vendored under ._xlsrmamba_vendor.wav2vec2_frontend
     from pinned fairseq a54021305d6b3c WITHOUT installing fairseq.
   * LL        : Linear(1024 -> 144) projection to the Mamba width.
@@ -86,7 +87,14 @@ _SSL_CFG_OVERRIDES = {
     "encoder_embed_dim": 1024,
     "encoder_ffn_embed_dim": 4096,
     "encoder_attention_heads": 16,
-    "layer_norm_first": False,
+    # PRE-NORM — XLSR-300M is a "do_stable_layer_norm" model (canonical HF
+    # config: do_stable_layer_norm=true, feat_extract_norm="layer"), and
+    # upstream XLSR-Mamba loads the frontend via fairseq's
+    # load_model_ensemble_and_task, i.e. with the CHECKPOINT'S OWN cfg. The
+    # hand-copied False (post-norm) collapsed every input to the same 0.154
+    # spoof posterior; with True this gate strict-loads (565/565) and
+    # discriminates inputs.
+    "layer_norm_first": True,
     "conv_bias": True,         # checkpoint carries conv bias tensors (X2 probe)
     "final_dim": 768,          # SSL pre-training head width (project_q etc.)
     # defaults kept explicit for auditability:
@@ -212,17 +220,20 @@ class XLSRMambaSpec(ArchSpec):
         else:
             wav = wav[:_INPUT_SAMPLES]
         wav = wav.unsqueeze(0)  # (1, 66800)
+        # arch seam may hand us ArchModelWrapper or the raw net — unwrap once
+        inner = getattr(model, "model", model)
         try:
-            dev = next(model.parameters()).device
+            dev = next(inner.parameters()).device
             wav = wav.to(dev)   # follow wherever build() placed the model
-        except StopIteration:
+        except (StopIteration, AttributeError):
             pass                # parameterless stub: nothing to align
-        was_training = model.training
-        model.eval()
+        was_training = getattr(inner, "training", False)
+        if hasattr(inner, "eval"):
+            inner.eval()
         with torch.no_grad():
-            logits = model(wav)
-        if was_training:
-            model.train()
+            logits = inner(wav)
+        if was_training and hasattr(inner, "train"):
+            inner.train()
         probs = F.softmax(logits.float(), dim=-1)
         return float(probs[0, 0].item())  # index 0 == spoof class (X5)
 
