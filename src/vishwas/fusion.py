@@ -299,6 +299,39 @@ class FusionEngine:
                 probs.append(val)
 
         x = s / total_w if total_w > 0 else 0.0
+        # total_w==0 guard (2026-08-25): targets with no mapped weights (document_generic,
+        # unclassified) previously fell through to raw=0.0 -> TRUST at conf 1.0 on ANY
+        # usable-but-unmapped check. That is a max-confidence overclaim from zero evidence.
+        # Honest answer for an unmapped target with usable signals is UNABLE_TO_VERIFY.
+        if total_w == 0:
+            return FusionDecision(verdict=Verdict.UNABLE_TO_VERIFY, score=0.0, raw=0.0,
+                                  disagreement=0.0, reasons=["no_mapped_weights_for_target"],
+                                  confidence=0.0,
+                                  missing_evidence=[c.name for c in usable][:6])
+        # Clean-evidence bonus (2026-08-25, fusion-trust fix): with risk-only positive
+        # weights, a fully-clean scan mathematically pinned raw at 0.5 -> CAUTION forever,
+        # making TRUST unreachable on every non-gov target. When ENOUGH mapped signals ran
+        # and EVERY present one is low-risk, pull the logit into the TRUST band.
+        # Magnitude: -1.8 shifts the logistic-6 mean by ~-0.3 => raw ~0.0 for all-clean.
+        # Partial coverage or any elevated signal skips the bonus (honest CAUTION/UNABLE).
+        _CLEAN_EPS = 0.10
+        _CLEAN_MIN_SIGNALS = 3
+        if total_w > 0:
+            present_vals: list[float] = []
+            for key2, w2 in wmap.items():
+                spec2 = _SIGNAL_SOURCES.get(key2)
+                if spec2 is None:
+                    continue
+                # KIND_CONST_TRUE signals are presence-flags: value 1.0 means the BAD
+                # condition exists (e.g. ext mismatch). Absent check => N/A, not risky.
+                if spec2[2] == "const_true":
+                    st0 = _extract(spec2, by_name.get(spec2[0]))[0]
+                    continue  # never counts toward (or against) the clean gate
+                st2, val2 = _extract(spec2, by_name.get(spec2[0]))
+                if st2 == "value" and isinstance(val2, (int, float)):
+                    present_vals.append(float(val2))
+            if len(present_vals) >= _CLEAN_MIN_SIGNALS and all(v <= _CLEAN_EPS for v in present_vals):
+                x += -1.8
         # logistic squash keeps range (0,1) and is robust to weight drift
         raw = 1.0 / (1.0 + math.exp(-6.0 * x)) if total_w > 0 else 0.0
 
@@ -333,8 +366,12 @@ class FusionEngine:
         elif raw >= CAUT_LO:
             verdict = Verdict.CAUTION
         elif raw <= TRUST_HI:
-            # selective prediction: TRUST only when no genuine missing evidence
-            verdict = Verdict.TRUST if not missing else Verdict.UNABLE_TO_VERIFY
+            # selective prediction: TRUST only when no GENUINE missing evidence.
+            # known_gap = check skipped/unavailable BY DESIGN (gate, N/A item type) —
+            # that is honest coverage, not missing evidence. Only 'absent'/'failed'
+            # states block trust (a mapped signal that should have run didn't).
+            genuine_missing = [m for m in missing if m not in set(known_gaps)]
+            verdict = Verdict.TRUST if not genuine_missing else Verdict.UNABLE_TO_VERIFY
         else:
             verdict = Verdict.CAUTION
 

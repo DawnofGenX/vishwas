@@ -218,6 +218,11 @@ class Orchestrator:
             results.append(CheckResult(name="ext_mismatch_flag", cost="cheap", status="ok",
                                        signals={"declared": art.declared_type.value, "verified": kind.value},
                                        notes="filename extension does not match actual content type"))
+        else:
+            # No mismatch: emit the explicit negative so fusion's const_true signal
+            # records a known_gap (N/A) instead of absent (missing evidence).
+            results.append(CheckResult(name="ext_mismatch_flag", cost="cheap", status="ok",
+                                       signals={}, notes="filename extension matches content type"))
 
         stage_timings: dict[str, float] = {}
         short_circuited: str | None = None
