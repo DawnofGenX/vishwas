@@ -63,11 +63,13 @@ Input conventions (reference dataloader + HAVIC_FT.forward comments)
   * forward: ``model(audio, video, is_training=False)`` -> overall logits
     ``(B, 1)`` (training mode additionally returns the two aux logits).
 
-Assumption H5 (polarity, unverified): ``score()`` returns the batch-mean
-``sigmoid(overall logit)`` in [0, 1] following the reference training
-convention.  The real/fake pole has NOT been checked against real weights
-(no real-weight inference in task 1.4a) — the wiring task MUST smoke-check
-polarity before this score is used for gating.
+Polarity H5 — VERIFIED 2026-08-25 (was 'unverified assumption'): ``score()``
+returns the batch-mean ``sigmoid(overall logit)`` where HIGH = FAKE. Ground
+truth: (a) upstream official repo is tuffy-studio/HAVIC (CVPR'26 Findings,
+arXiv:2603.23960) — README states output is deepfake probability "1:fake;
+0:real"; (b) empirical probe with real weights through the production seam
+scored a synthetic ffmpeg testsrc2+sine clip at prob_inconsistent=0.997.
+(The JielunPeng/HAVIC URL below 404s; kept for code-lineage provenance only.)
 """
 from __future__ import annotations
 
@@ -137,7 +139,7 @@ class HavicArch(ArchSpec):
         return super().apply_state(model, stripped)
 
     def score(self, model: Any, x: Any) -> float:
-        """Mean ``sigmoid(overall logit)`` in [0, 1] (assumption H5).
+        """Mean ``sigmoid(overall logit)`` in [0, 1] (H5, verified: high = fake).
 
         *x* is an ``(audio_features, visual_frames)`` pair — numpy arrays or
         torch tensors.  Audio accepts ``(1024, 128)``, ``(B, 1024, 128)`` or
