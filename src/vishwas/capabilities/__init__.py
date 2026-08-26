@@ -1,6 +1,5 @@
 """Capability modules."""
-from .url_phishing import UrlPhishingCapability
-from .url_mal_ml import UrlPhishMlCapability
+from .url_phish_scanner import UrlPhishScannerCapability
 from .malware_file import MaliciousFileCapability
 from .gov_document import GovDocumentCapability
 from .deepfake_video import DeepfakeVideoCapability
@@ -9,7 +8,7 @@ from .image_facecheck import ImageFaceCheckCapability
 from .cross_modal import CrossModalCapability
 
 __all__ = [
-    "UrlPhishingCapability", "UrlPhishMlCapability", "MaliciousFileCapability", "GovDocumentCapability",
+    "UrlPhishScannerCapability", "MaliciousFileCapability", "GovDocumentCapability",
     "DeepfakeVideoCapability", "DeepfakeAudioCapability", "ImageFaceCheckCapability",
     "CrossModalCapability",
 ]
@@ -28,11 +27,9 @@ def default_capabilities(available_deps: set[str]) -> dict[str, list]:
         "cross_modal": [], "document_generic": [], "unclassified": [],
     }
     try:
-        caps["url_phishing"].append(UrlPhishingCapability())
-    except Exception:
-        pass
-    try:
-        caps["url_phishing"].append(UrlPhishMlCapability())  # local ML fallback when VT inconclusive
+        # 2026-08-26 operator decision: PhishingScanner ALONE decides URL
+        # phishing. VT/heuristics/url-phishml were dropped from this target.
+        caps["url_phishing"].append(UrlPhishScannerCapability())
     except Exception:
         pass
     try:

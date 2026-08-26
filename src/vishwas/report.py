@@ -44,8 +44,10 @@ _CONCERN_RULES: list[tuple[str, str, float, str]] = [
     # carry prob_deepfake for still images; surface the same face/synthetic concern.
     ("frequency_band_analysis", "prob_deepfake", 0.5, "concern_video_face"),
     ("image_face_forensics", "prob_deepfake", 0.5, "concern_video_face"),
-    ("vt_url_reputation", "positives_ratio", 0.05, "concern_url_flag"),
-    ("phish_heuristics", "host_string_score", 0.5, "concern_url_typo"),
+    # URL (2026-08-26): PhishingScanner is the sole url_phishing detector, so
+    # the url concern bullets now key on its risk_score_norm / is_phishing.
+    ("url_phish_scanner", "risk_score_norm", 0.5, "concern_url_flag"),
+    ("url_phish_scanner", "is_phishing", 0.5, "concern_url_typo"),
     ("gov_document", "prob_forged", 0.5, "concern_doc_forged"),
 ]
 

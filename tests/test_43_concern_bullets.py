@@ -39,11 +39,9 @@ def test_av_sync_high_yields_sync_bullet():
     assert "concern_av_sync" in got
 
 
-def test_url_vt_and_typo_fire():
+def test_url_phish_scanner_fires():
     checks = [
-        _ck("vt_url_reputation", {"positives_ratio": 0.1}),
-        _ck("phish_heuristics", {"host_string_score": 0.7}),
-        _ck("url_phishml", {"phishing_prob": 0.05}),
+        _ck("url_phish_scanner", {"risk_score_norm": 0.7, "is_phishing": True}),
     ]
     got = concerns_for(checks, "url_phishing", Verdict.DO_NOT_USE, "en")
     assert "concern_url_flag" in got

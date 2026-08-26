@@ -24,15 +24,15 @@ def cr(name, status, **signals):
 # ---------------------------------------------------------- feature vector --
 def test_feature_vector_layout_pairs_value_with_gap_flag():
     engine = FusionEngine()
-    checks = [cr("phish_heuristics", "ok", score_norm=0.4, young_domain=False)]
+    checks = [cr("url_phish_scanner", "ok", risk_score_norm=0.4, is_phishing=False)]
     vec = FusionEngine.feature_vector("url_phishing", checks)
     # one (value, gap) pair per weight key
     from vishwas import fusion as _fm
     n_weights = len(_fm.WEIGHTS["url_phishing"])
     assert len(vec) == 2 * n_weights
     assert all(isinstance(v, float) for v in vec)
-    # phish_heuristics present & usable -> value written, gap flag 0
-    phish_key = list(_fm.WEIGHTS["url_phishing"].keys()).index("phish.heuristic_score")
+    # url_phish_scanner present & usable -> value written, gap flag 0
+    phish_key = list(_fm.WEIGHTS["url_phishing"].keys()).index("phish_scanner.risk_norm")
     idx = 2 * phish_key
     assert vec[idx] == pytest.approx(0.4)
     assert vec[idx + 1] == 0.0
@@ -45,7 +45,7 @@ def test_feature_vector_unknown_target_is_empty_not_crash():
 
 # ------------------------------------------------------------------- decide --
 def test_no_usable_checks_abstains():
-    d = FusionEngine().decide("url_phishing", [cr("vt_url_reputation", "unavailable")])
+    d = FusionEngine().decide("url_phishing", [cr("url_phish_scanner", "unavailable")])
     assert d.verdict is Verdict.UNABLE_TO_VERIFY
     assert "no_usable_signals" in d.reasons
     assert d.confidence == 0.0
@@ -53,9 +53,7 @@ def test_no_usable_checks_abstains():
 
 def test_strong_phish_signals_do_not_use():
     checks = [
-        cr("phish_heuristics", "ok", score_norm=1.0, young_domain=True),
-        cr("vt_url_reputation", "ok", positives_ratio=1.0),
-        cr("ssrf_guard", "ok", blocked=True),   # bool->float coerced by _extract? keep numeric form
+        cr("url_phish_scanner", "ok", risk_score_norm=1.0, is_phishing=True),
     ]
     d = FusionEngine().decide("url_phishing", checks)
     assert d.verdict is Verdict.DO_NOT_USE
@@ -63,7 +61,7 @@ def test_strong_phish_signals_do_not_use():
 
 
 def test_benign_low_signal_caution_band():
-    checks = [cr("phish_heuristics", "ok", score_norm=0.02, young_domain=False)]
+    checks = [cr("url_phish_scanner", "ok", risk_score_norm=0.02, is_phishing=False)]
     d = FusionEngine().decide("url_phishing", checks)
     # single cheap signal cannot certify trust -> caution band, abstaining from TRUST
     assert d.verdict in (Verdict.CAUTION, Verdict.UNABLE_TO_VERIFY)

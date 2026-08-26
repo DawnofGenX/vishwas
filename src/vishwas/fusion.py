@@ -66,14 +66,14 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "entropy.anomaly": 1.5,
         "sandbox.malicious": 4.0,
     },
+    # 2026-08-26 operator decision: PhishingScanner (vendored, MIT) ALONE
+    # decides URL phishing. The former VirusTotal reputation, offline-DOM
+    # heuristics plus young-domain scoring, the vendored-xgboost url-phishml
+    # probability, redirect counting and the dropped ssrf/download
+    # obey-checks were all removed from this target — PhishingScanner's
+    # risk_score_norm is the single weighted signal.
     "url_phishing": {
-        "vt.url_positives_ratio": 4.0,
-        "phish.heuristic_score": 2.5,
-        "phishml.prob": 2.0,
-        "domain.young": 1.0,
-        "redirect.suspicious_hop": 1.5,
-        "ssrf.blocked": 1.5,
-        "download.ext_mismatch": 1.0,
+        "phish_scanner.risk_norm": 1.0,
     },
     "gov_document": {
         "signature.valid": -4.0,
@@ -155,13 +155,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
     "entropy.anomaly": ("file_entropy", "anomaly", KIND_DEFAULT_NUM, False),
     "sandbox.malicious": ("dynamic_sandbox", "malicious", KIND_DEFAULT_NUM, False),
     # --- url_phishing ---
-    "vt.url_positives_ratio": ("vt_url_reputation", "positives_ratio", KIND_DEFAULT_NUM, False),
-    "phish.heuristic_score": ("phish_heuristics", "score_norm", KIND_DEFAULT_NUM, False),
-    "phishml.prob": ("url_phishml", "phishing_prob", KIND_DEFAULT_NUM, True),
-    "domain.young": ("phish_heuristics", "young_domain", KIND_DEFAULT_NUM, False),
-    "redirect.suspicious_hop": ("url_redirects", "suspicious_hops", KIND_DEFAULT_NUM, False),
-    "ssrf.blocked": ("ssrf_guard", "blocked", KIND_DEFAULT_NUM, False),
-    "download.ext_mismatch": ("url_download_revalidated", "ext_mismatch", KIND_DEFAULT_NUM, False),
+    "phish_scanner.risk_norm": ("url_phish_scanner", "risk_score_norm", KIND_DEFAULT_NUM, True),
     # --- gov_document ---
     "signature.valid": ("digital_signature", "valid", KIND_NEG_BOOL, False),
     "sig_object.present": ("digital_signature", "has_sig_object", KIND_NEG_BOOL, False),
@@ -190,7 +184,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
 # have — used for selective-prediction coverage.
 _EXPECTED_PROB_DET: dict[str, int] = {
     "deepfake_video": 4, "deepfake_audio": 4, "cross_modal": 2,
-    "image_facecheck": 2, "malicious_file": 3, "url_phishing": 2,
+    "image_facecheck": 2, "malicious_file": 3, "url_phishing": 1,
     "gov_document": 0, "document_generic": 0, "unclassified": 0,
 }
 

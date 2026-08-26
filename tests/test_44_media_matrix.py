@@ -68,10 +68,9 @@ def test_image_spai_heavy_concern():
 
 # --------------------------------------------------------------- url
 
-def test_url_vt_and_typo_bullets():
+def test_url_phish_scanner_bullets():
     t = _render("url_phishing", Verdict.DO_NOT_USE, [
-        _ck("vt_url_reputation", {"positives_ratio": 0.12}),
-        _ck("phish_heuristics", {"host_string_score": 0.7}),
+        _ck("url_phish_scanner", {"risk_score_norm": 0.7, "is_phishing": True}),
     ])
     _assert_media(t, "poor security reputation", "disguised copy")
 
@@ -94,6 +93,6 @@ def test_every_rule_signal_is_used_by_a_media():
     assert names == {
         "aasist_detector", "xlsr_audio_detector", "effort_face_forensics",
         "frame_heuristics", "cross_modal_av", "frequency_band_analysis",
-        "image_face_forensics", "vt_url_reputation", "phish_heuristics",
+        "image_face_forensics", "url_phish_scanner",
         "gov_document",
     }

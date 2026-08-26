@@ -25,27 +25,30 @@ def _ck(name: str, status: str = "ok", sig: dict | None = None) -> CheckResult:
 
 
 def _url_checks_clean() -> list[CheckResult]:
+    # 2026-08-26: PhishingScanner is the SOLE url_phishing detector, so a "clean"
+    # url is represented by exactly one low-risk url_phish_scanner result.
     return [
-        _ck("vt_url_reputation", "ok", {"positives_ratio": 0.0, "vt_total_engines": 91}),
-        _ck("phish_heuristics", "ok", {"score_norm": 0.01, "young_domain": False}),
-        _ck("url_phishml", "ok", {"phishing_prob": 0.05, "n_lexical": 16, "n_network": 7}),
-        _ck("ssrf_guard", "ok", {"blocked": 0.0}),
-        _ck("url_redirects", "ok", {"suspicious_hops": 0}),
-        _ck("url_download_revalidated", "ok", {"ext_mismatch": False, "verified_kind": "text"}),
+        _ck("url_phish_scanner", "ok", {"risk_score": 15, "risk_score_norm": 0.15,
+                                        "is_phishing": False}),
     ]
 
 
-def test_url_all_clean_reaches_trust():
+def test_url_clean_low_risk_reads_caution_not_dnu():
+    """F-A (url, new posture): with PhishingScanner as the single weighted
+    detector there is exactly one signal, so the clean-side bonus (which needs
+    >=3 present signals) can never fire and TRUST is structurally unreachable
+    for url_phishing. A clean low-risk scan honestly reads CAUTION (never
+    DO_NOT_USE) — matching the operator's 'PhishingScanner ALONE decides' call."""
     d = FusionEngine().decide("url_phishing", _url_checks_clean())
-    assert d.verdict is Verdict.TRUST
-    assert d.raw <= 0.15
+    assert d.verdict is not Verdict.TRUST
+    assert d.verdict is not Verdict.DO_NOT_USE  # not overclaiming a clean link
+    assert d.verdict is Verdict.CAUTION
 
 
 def test_url_bad_stays_do_not_use():
     checks = [
-        _ck("vt_url_reputation", "ok", {"positives_ratio": 0.18, "vt_total_engines": 91}),
-        _ck("phish_heuristics", "ok", {"score_norm": 1.0, "young_domain": True}),
-        _ck("ssrf_guard", "ok", {"blocked": 0.0}),
+        _ck("url_phish_scanner", "ok", {"risk_score": 95, "risk_score_norm": 0.95,
+                                        "is_phishing": True}),
     ]
     d = FusionEngine().decide("url_phishing", checks)
     assert d.verdict is Verdict.DO_NOT_USE
@@ -53,7 +56,8 @@ def test_url_bad_stays_do_not_use():
 
 def test_partial_coverage_no_bonus():
     """Only one signal ran -> no clean bonus -> NOT trustable."""
-    checks = [_ck("phish_heuristics", "ok", {"score_norm": 0.02, "young_domain": False})]
+    checks = [_ck("url_phish_scanner", "ok", {"risk_score_norm": 0.02,
+                                              "is_phishing": False})]
     d = FusionEngine().decide("url_phishing", checks)
     assert d.verdict is not Verdict.TRUST
 
