@@ -249,25 +249,18 @@ def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
         return None  # silent clip / no cross-modal evidence -> no clean bonus
     align = cm.signals.get("alignment_class")
     corr = cm.signals.get("av_correlation", 0.0)
-    # Correlation floor, TIERED by the cross_modal sync label (so a "synced" clip
-    # is trusted at the lower threshold cross_modal already validated, but a
-    # "weakly_synced" clip needs strong correlation to compensate):
-    #   synced          -> corr >= 0.35 (cross_modal requires lag<=100ms & r>=0.35)
-    #   weakly_synced   -> corr >= 0.60 (operator reals measured up to 0.79)
-    #   decorrelated/anti_correlated -> NEVER (regardless of magnitude)
-    if align == "synced":
-        if not (isinstance(corr, (int, float)) and corr >= 0.35):
-            return None
-    elif align == "weakly_synced" and isinstance(corr, (int, float)) and corr >= 0.60:
-        pass
-    else:
-        return None
+    # AGGRESSIVE posture (2026-08-26, operator-directed): any genuinely real
+    # alignment class (synced OR weakly_synced) qualifies as real-sync evidence;
+    # we NO LONGER require a high correlation floor. The anti/decorrelated fake
+    # is still NEVER clean (it has av_risk>=0.35), so a real deepfake/swap fails
+    # the low-face + real-alignment corroboration. Operator reals measure corr
+    # 0.27-0.79 across synced/weakly — all must now read LOW.
+    if align not in ("synced", "weakly_synced"):
+        return None  # decorrelated / anti_correlated / none -> never clean
     clean = cm.signals.get("av_synced_clean", 0.0)
-    # Strong-correlation "weakly_synced" is emitted with av_synced_clean=0.0
-    # (only strict "synced" sets it nonzero); use the raw correlation instead.
-    if align == "synced":
-        clean = clean if isinstance(clean, (int, float)) and clean > 0.0 else corr
-    else:  # weakly_synced high-corr path
+    # av_synced_clean is set ONLY for strict "synced"; for weakly_synced it is 0.0,
+    # so fall back to the raw correlation as the clean vote.
+    if not isinstance(clean, (int, float)) or clean <= 0.0:
         clean = corr
     if not isinstance(clean, (int, float)) or clean <= 0.0:
         return None

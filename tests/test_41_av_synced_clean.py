@@ -69,10 +69,36 @@ def test_no_audio_gets_no_clean_bonus():
     assert d.verdict is not Verdict.TRUST, f"no-audio must not trust: {d.verdict}"
 
 
+def test_weakly_synced_low_corr_real_now_trusts():
+    # Operator's real video 3205c5f9 (corr 0.452, av_risk 0.1, effort 0.52, fh 0.10)
+    # currently reads MEDIUM. Aggressive posture (operator-directed):
+    # any genuinely-synced/weakly real with low face+frame evidence trusts.
+    checks = [
+        _ck("effort_face_forensics", {"prob_deepfake": 0.52}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.10}),
+        _ck("cross_modal_av", {"av_correlation": 0.452, "alignment_class": "weakly_synced",
+                               "av_risk_addition": 0.1, "av_synced_clean": 0.0}),
+    ]
+    from vishwas.fusion import FusionEngine
+    d = FusionEngine().decide(target="deepfake_video", checks=checks)
+    assert d.verdict == Verdict.TRUST, d
+
+
+def test_real_low_corr_267_now_trusts():
+    # Operator's real video aab08774 (corr 0.266, av_risk 0.1, effort 0.47, fh 0.14)
+    checks = [
+        _ck("effort_face_forensics", {"prob_deepfake": 0.47}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.14}),
+        _ck("cross_modal_av", {"av_correlation": 0.266, "alignment_class": "weakly_synced",
+                               "av_risk_addition": 0.1, "av_synced_clean": 0.0}),
+    ]
+    from vishwas.fusion import FusionEngine
+    d = FusionEngine().decide(target="deepfake_video", checks=checks)
+    assert d.verdict == Verdict.TRUST, d
+
+
 def test_weakly_synced_high_corr_real_reaches_trust():
-    # operator's real phone videos measure corr ~0.79 at lag 198ms (classed
-    # weakly_synced) — strong correlation is decisive real-sync evidence, so
-    # with low face-forensics it must ALSO reach TRUST.
+    # operator's real phone video corr ~0.79 — with low face-forensics it trusts
     checks = [
         _ck("effort_face_forensics", {"prob_deepfake": 0.43}),
         _ck("cross_modal_av", {"av_correlation": 0.79, "best_lag_ms": 198,
@@ -84,14 +110,29 @@ def test_weakly_synced_high_corr_real_reaches_trust():
     assert d.verdict is Verdict.TRUST, f"weakly_synced high-corr real should trust: {d.verdict}"
 
 
-def test_weakly_synced_low_corr_never_trusts():
-    # weakly_synced but LOW correlation (0.4) is NOT convincing real sync -> no clean
+def test_decorrelated_or_anti_never_trusts():
+    # a fake/swap is decorrelated or anti-correlated (av_risk high) -> NEVER clean
+    for align, corr, avr in (("anti_correlated", -2.0, 0.5),
+                             ("decorrelated", 0.0, 0.35)):
+        checks = [
+            _ck("effort_face_forensics", {"prob_deepfake": 0.45}),
+            _ck("cross_modal_av", {"av_correlation": corr, "best_lag_ms": 0,
+                                   "alignment_class": align, "av_risk_addition": avr,
+                                   "av_synced_clean": 0.0}),
+            _ck("frame_heuristics", {"prob_deepfake": 0.15}),
+        ]
+        d = FusionEngine().decide("deepfake_video", checks)
+        assert d.verdict is not Verdict.TRUST, f"{align} must not trust: {d.verdict}"
+
+
+def test_high_effort_real_like_never_trusts():
+    # even a real-sync clip with HIGH face-forensics (swap-like) stays not-LOW
     checks = [
-        _ck("effort_face_forensics", {"prob_deepfake": 0.45}),
-        _ck("cross_modal_av", {"av_correlation": 0.40, "best_lag_ms": 150,
-                               "alignment_class": "weakly_synced", "av_risk_addition": 0.1,
-                               "av_synced_clean": 0.0}),
-        _ck("frame_heuristics", {"prob_deepfake": 0.15}),
+        _ck("effort_face_forensics", {"prob_deepfake": 0.9}),
+        _ck("cross_modal_av", {"av_correlation": 0.79, "best_lag_ms": 0,
+                               "alignment_class": "synced", "av_risk_addition": 0.1,
+                               "av_synced_clean": 0.5}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.1}),
     ]
     d = FusionEngine().decide("deepfake_video", checks)
-    assert d.verdict is not Verdict.TRUST, f"weakly_synced low-corr must not trust: {d.verdict}"
+    assert d.verdict is not Verdict.TRUST, f"high-effort must not trust: {d.verdict}"
