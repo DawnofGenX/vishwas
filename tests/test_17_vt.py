@@ -9,6 +9,7 @@ Covers brief cases a-g:
   e. persistent 429 -> after max retries 'unavailable', no exception escapes
   f. URLError/timeout -> 'unavailable', graceful
   g. base64url() correct against known vectors (URL + sha256 forms)
+  h. url id 404 -> /domains/<host> fallback (Finding E)
 """
 from __future__ import annotations
 
@@ -197,6 +198,38 @@ def test_404_is_clean_negative(monkeypatch):
     assert res.counts == {}
     assert res.verdict == "low"
     assert op.calls == 1  # 404 is not retried
+
+
+def test_url_404_falls_back_to_domain(monkeypatch):
+    """Finding E regression: exact-url /urls/<id> 404s flakily even for known
+    URLs; the client must retry via /domains/<host> and parse its stats."""
+    monkeypatch.setenv("VISHWAS_VT_API_KEY", "test-key")
+
+    class RecordingOpener(FakeOpener):
+        def __init__(self, script):
+            super().__init__(script)
+            self.urls = []
+
+        def __call__(self, req, timeout=None):
+            self.urls.append(req.full_url)
+            return super().__call__(req, timeout=timeout)
+
+    e404 = lambda: urllib.error.HTTPError(  # noqa: E731
+        "https://x", 404, "not found", {}, io.BytesIO(b""))
+    domain_stats = {"malicious": 3, "undetected": 73}
+    op = RecordingOpener([e404(), _file_payload(domain_stats, category="website")])
+    c = VtClient(opener=op, sleep=op.sleep)
+    res = c.check_url("https://evil.example.net/login")
+
+    assert res.status == "ok"
+    assert res.raw_status == 200
+    assert res.counts["malicious"] == 3
+    assert res.verdict == "high"  # map_verdict: malicious >= 1
+    # First request hit the exact-url id endpoint...
+    assert "/urls/" in op.urls[0]
+    # ...and the 404 triggered exactly one /domains/<host> fallback.
+    assert "/domains/evil.example.net" in op.urls[1]
+    assert op.calls == 2
 
 
 # ------------------------------------------------------------------- g ----
