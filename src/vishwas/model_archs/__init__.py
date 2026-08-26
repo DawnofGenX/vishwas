@@ -14,6 +14,13 @@ from .base import ArchNotImplementedError, ArchSpec
 #: family -> module name inside this package
 _FAMILIES = {
     "aasist": "aasist",
+    # Spectra-AASIST3 (Apache-2.0): the PROVEN production audio anti-spoofing
+    # arch — independently re-scored AUC 0.9967 / EER 0.70% on the official
+    # ASVspoof2019-LA eval (2026-08-26, Track C). Replaces the old HABLA_
+    # WavLM_AASIST checkpoint for the VISHWAS_AASIST slot (see aasist3.py
+    # pmodule header + aasist.py WHY-THIS-SWAP). Polarity: p_spoof (bonafide
+    # low / spoof high), as score() inverts the checkpoint's bona-fide logit.
+    "aasist3": "aasist3",
     "effort": "effort",
     "havic": "havic",
     # RawBMamba fills the pipeline's Mamba slot (deepfake_audio calls it

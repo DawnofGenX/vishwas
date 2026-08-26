@@ -198,7 +198,14 @@ def _default_load(path: str) -> Any:
 
 #: env var -> arch family registered in vishwas.model_archs
 _ARCH_FAMILIES = {
-    "VISHWAS_AASIST_WEIGHTS": "aasist",
+    # 2026-08-26 SWAP to proven arch: the VISHWAS_AASIST slot now resolves to
+    # 'aasist3' (Spectra-AASIST3, Apache-2.0) instead of the old 'aasist'
+    # (HABLA_WavLM_AASIST) checkpoint, which was rejected/inverted at serving
+    # (bonafide prob_deepfake 1.0). Track C independently re-scored Spectra-
+    # AASIST3 at AUC 0.9967 / EER 0.70% on the official ASVspoof2019-LA eval
+    # (bonafide p_spoof median 0.000, spoof 0.991). Old 'aasist' arch module is
+    # retained in the registry as rollback; see model_archs/aasist3.py header.
+    "VISHWAS_AASIST_WEIGHTS": "aasist3",
     "VISHWAS_EFFORT_WEIGHTS": "effort",
     "VISHWAS_HAVIC_WEIGHTS": "havic",
     # RawBMamba fills the 'fakemamba' family (see model_archs/fakemamba.py).
@@ -543,17 +550,20 @@ ADAPTERS: dict[str, Adapter] = {
     "VISHWAS_AASIST_WEIGHTS": Adapter(
         env_name="VISHWAS_AASIST_WEIGHTS",
         family="audio",
-        # WavLM-AASIST wants a RAW 16 kHz waveform, not a mel matrix. The
-        # learned arch (model_archs.aasist) repeat-pads to the trained 4 s
-        # window inside score(); _waveform_preprocess just decodes to PCM.
+        # Spectra-AASIST3 wants a RAW 16 kHz waveform, not a mel matrix. The
+        # learned arch (model_archs.aasist3) pre-emphasises + windows to its
+        # 64,600-sample window inside score(); _waveform_preprocess just
+        # decodes to PCM.
         preprocess=_waveform_preprocess,
         extract_prob=_auto_extract,
-        # Phase 1 Task 1.2: route through the arch-aware seam so a provisioned
-        # checkpoint loads as a READY ArchModelWrapper (.predict/.score ->
-        # calibrated spoof posterior). Env unset / arch unavailable -> None +
-        # last_reason, and T2 falls back to its heuristic features unchanged.
+        # Phase 1 Task 1.2 + 2026-08-26: route through the arch-aware seam so
+        # a provisioned checkpoint loads as a READY ArchModelWrapper (.predict/
+        # .score -> calibrated spoof posterior). Family now 'aasist3'
+        # (Spectra-AASIST3, proven AUC 0.9967) — see _ARCH_FAMILIES comment.
+        # Env unset / arch unavailable -> None + last_reason, and T2 falls
+        # back to its heuristic features unchanged.
         _load=lambda p: _arch_aware_load(
-            p, "aasist", env_name="VISHWAS_AASIST_WEIGHTS"),
+            p, "aasist3", env_name="VISHWAS_AASIST_WEIGHTS"),
     ),
     "VISHWAS_XLSRMAMBA_WEIGHTS": Adapter(
         env_name="VISHWAS_XLSRMAMBA_WEIGHTS",

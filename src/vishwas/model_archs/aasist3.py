@@ -32,7 +32,9 @@ evidence. Old checkpoint kept as rollback in deploy/vishwas-secrets.env.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,39 @@ if str(_VENDOR_DIR.parent.parent) not in sys.path:
 
 _INPUT_SAMPLES = 64_600
 _PREEMPHASIS = 0.97
+
+#: memoised combined wav2vec2 snapshot dirs, keyed by the weights dir. The
+#: weights area holds ONLY pytorch_model.bin; the XLS-R-300m config + preproc
+#: live in the vendored net tree. from_pretrained needs all three in one dir or
+#: it instantiates a base-768 default-config shell that can't carry the
+#: 1024-dim checkpoint (Track C combined them; we do the same, in a temp dir,
+#: never writing to the weights area).
+_w2v_snapshots: dict[str, str] = {}
+
+
+def _ensure_w2v_snapshot(w2v_dir: Path) -> Path:
+    """Return a complete wav2vec2 dir (config + preproc + bin) for from_pretrained."""
+    key = str(w2v_dir)
+    if key in _w2v_snapshots:
+        return Path(_w2v_snapshots[key])
+    vendored = _VENDOR_DIR / "wav2vec2-xls-r-300m"
+    has_config = (w2v_dir / "config.json").exists()
+    if has_config:
+        _w2v_snapshots[key] = key  # complete already
+        return w2v_dir
+    out = Path(tempfile.mkdtemp(prefix="vishwas_w2v_"))
+    for f in ("config.json", "preprocessor_config.json"):
+        c = vendored / f
+        if c.exists():
+            (out / f).write_bytes(c.read_bytes())
+    bin_src = w2v_dir / "pytorch_model.bin"
+    if bin_src.exists():
+        try:
+            os.symlink(bin_src, out / "pytorch_model.bin")
+        except OSError:
+            shutil.copy(bin_src, out / "pytorch_model.bin")
+    _w2v_snapshots[key] = str(out)
+    return out
 
 
 def _load_net_class():
@@ -101,7 +136,14 @@ class SpectraAASIST3Spec(ArchSpec):
 
         def _local_from_pretrained(name_or_path=None, *a, **kw):
             kw.setdefault("local_files_only", True)
-            return orig_from_pretrained(str(w2v_dir), *a, **kw)
+            # transformers >= 5.0 rejects gradient_checkpointing= from_pretrained
+            # kwargs (no external score_eval shim needed). Production inference
+            # runs eval-only, so the flag is always False here anyway.
+            kw.pop("gradient_checkpointing", None)
+            # Combine the weights-dir bin with the vendored config (see
+            # _ensure_w2v_snapshot) so the correct XLS-R-300m shell is built.
+            return orig_from_pretrained(
+                str(_ensure_w2v_snapshot(w2v_dir)), *a, **kw)
 
         mod.Wav2Vec2Model.from_pretrained = staticmethod(_local_from_pretrained)
         try:
@@ -145,3 +187,9 @@ class SpectraAASIST3Spec(ArchSpec):
         if was_training and hasattr(inner, "train"):
             inner.train()
         return float(1.0 - F.softmax(logits, dim=-1)[0, 1].item())
+
+
+def get_arch() -> SpectraAASIST3Spec:
+    """Registry hook consumed by ``vishwas.model_archs.get_arch`` (family
+    ``'aasist3'``) and by ``vishwas.model_adapters._arch_aware_load``."""
+    return SpectraAASIST3Spec()
