@@ -293,7 +293,7 @@ class Orchestrator:
         results = sorted(dedup.values(), key=lambda r: -rank.get(r.status, 0))
 
         fused = self.fusion.decide(target, results)
-        reliable_ok, gate_notes = self.reliability.evaluate(fused, results, ctx)
+        reliable_ok, gate_notes = self.reliability.evaluate(fused, results, ctx, target)
         if not reliable_ok:
             fused.score = 0.0
             fused.verdict = Verdict.UNABLE_TO_VERIFY

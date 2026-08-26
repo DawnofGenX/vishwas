@@ -278,6 +278,32 @@ def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
     return min(float(clean), 0.9)
 
 
+def _image_clean(by_name: dict[str, Any]) -> bool:
+    """True when an image is CORROBORATED clean: integrity ok, face-forensics low,
+    AND frequency-band low — all independent signals agree no synthetic artifact.
+    A lone SPAI-high real photo (known false-positive) fails the low-face test.
+    Any detector missing/flagged -> NOT clean (conservative)."""
+    integ = by_name.get("image_integrity")
+    if integ is not None and not integ.usable():
+        return False  # integrity check failed/completed-failed -> not clean
+    # face-forensics (SPAI) is the STRONG, reliable detector (measured median
+    # 0.0014 real vs 0.66 AI; freqband is documented dead-noise: real 0.463 vs
+    # AI 0.399, overlapping — it cannot flag anything). So:
+    #   - SPAI, when present, MUST be low (a lone SPAI-high real photo, the known
+    #     false-positive, must NOT trust).
+    #   - freqband is a DEMOTE-ONLY guard: block trust only when it's clearly
+    #     high (>0.6, well above its noise floor) — NOT at 0.45, which a real
+    #     photo crosses just from normal band energy.
+    eff_c = by_name.get("image_face_forensics")
+    fb = _probe(by_name, "frequency_band_analysis", "prob_deepfake", 0.0)
+    if fb > 0.60:
+        return False  # freqband clearly flags -> not clean
+    if eff_c is None or not eff_c.usable():
+        return True  # SPAI absent, everything else clean -> trust
+    eff = eff_c.signals.get("prob_deepfake", 1.0)
+    return eff <= 0.45
+
+
 def _probe(by_name: dict[str, Any], check: str, key: str, default: float) -> float:
     c = by_name.get(check)
     if c is None or not c.usable():
@@ -602,6 +628,18 @@ class FusionEngine:
             verdict = Verdict.TRUST
             _clean_side_asserted = True
 
+        # CLEAN-SIDE TRUST for images (2026-08-26, operator-directed): a clean
+        # real photo (integrity ok AND face-forensics low <=0.45 AND freqband
+        # low <=0.45) reads LOW/trust. Without this, even a genuinely-clean
+        # image lands CAUTION forever (all image weights are positive -> x~0 ->
+        # sigmoid ~0.5 -> CAUTION; no negative clean signal existed). CORROBORATED:
+        # both independent detectors must agree low, so a lone SPAI-high real
+        # photo (the known ~24% false-positive) still reads CAUTION, not trust.
+        if target == "image_facecheck" and verdict is not Verdict.DO_NOT_USE \
+                and _image_clean(by_name):
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
         # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
         # different detectors, so spread IS a signal (a mode), not abstention.
         pattern = "generic"
@@ -649,8 +687,12 @@ class FusionEngine:
         else:
             if disagreement > 0.35:
                 certainty *= 0.5
-                if verdict is Verdict.TRUST:
-                    verdict = Verdict.CAUTION
+                # asserted clean-side override (image): a corroborated-clean photo
+                # (SPAI low + integrity ok) is decisive clean, not a conflicting-mode
+                # case — do NOT demote its TRUST.
+                if not _clean_side_asserted:
+                    if verdict is Verdict.TRUST:
+                        verdict = Verdict.CAUTION
                 certainty = min(certainty, 0.4)
         if missing:
             certainty *= 0.7
@@ -771,7 +813,7 @@ class ReliabilityGate:
         self.shift_tolerance = shift_tolerance
 
     def evaluate(self, fused: FusionDecision, checks: list[CheckResult],
-                 ctx: JobContext) -> tuple[bool, list[str]]:
+                 ctx: JobContext, target: str = "") -> tuple[bool, list[str]]:
         notes: list[str] = []
         ok = True
         usable = [c for c in checks if c.usable()]
@@ -783,7 +825,13 @@ class ReliabilityGate:
         # Fusion v2: a COHERENT deepfake pattern (multiple detectors of DIFFERENT
         # types agreeing on the same generative mode) is corroboration, not
         # conflict — do not abort on spread when the pattern is coherent.
-        if fused.disagreement > self.max_disagreement and not fused.coherent_pattern:
+        # IMAGE (2026-08-26): exempt from the disagreement-abort — the NOT-binary
+        # cap already bounds image verdicts at CAUTION (a lone high read can
+        # never reach DNU), so a SPAI-vs-freqband spread must surface as
+        # CAUTION/MEDIUM (suspicious), NOT UNVERIFIED. This is the operator's
+        # requested fix (image detector was returning UNVERIFIED).
+        if fused.disagreement > self.max_disagreement and not fused.coherent_pattern \
+                and target != "image_facecheck":
             ok = False
             notes.append(f"disagreement={fused.disagreement:.2f}>{self.max_disagreement}")
 

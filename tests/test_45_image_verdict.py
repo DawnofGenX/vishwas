@@ -1,0 +1,79 @@
+"""Image verdict fixes: clean real photos read LOW/trust; flagged AI images read
+CAUTION/HIGH (never UNVERIFIED). Corroboration-gated so a lone SPAI read can't
+false-trust and can't false-doom.
+"""
+from __future__ import annotations
+
+from vishwas.capabilities.base import CheckResult
+from vishwas.events import Verdict
+from vishwas.fusion import FusionEngine
+
+
+def _ck(n, s, status="ok"): return CheckResult(n, "mid", status, s, "")
+
+
+def _decide(checks):
+    return FusionEngine().decide(target="image_facecheck", checks=checks)
+
+
+def test_clean_real_photo_reads_low():
+    # integrity ok + BOTH detectors low => genuine clean photo -> TRUST/LOW
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.30}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.10}),
+    ])
+    assert d.verdict == Verdict.TRUST, d.reasons
+
+
+def test_clean_real_photo_spai_absent_still_trusts_if_others_clean():
+    # SPAI heavy may be unavailable; integrity + freqband clean is enough to trust
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.32}),
+    ])
+    assert d.verdict == Verdict.TRUST, d.reasons
+
+
+def test_lone_spai_high_reads_caution_not_unverified():
+    # SPAI flags a real photo (0.999) but second signal clean => keep CAUTION/MEDIUM,
+    # do NOT demote to UNVERIFIED (that's the reported bug).
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.49}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.999}),
+    ])
+    assert d.verdict == Verdict.CAUTION, d.reasons
+    assert d.verdict is not Verdict.UNABLE_TO_VERIFY
+
+
+def test_ai_image_corroborated_reads_high_or_caution():
+    # SPAI high AND freqband high (two independent signals) => strong fake signal
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.72}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.90}),
+    ])
+    # image caps at CAUTION absent a second *trusted* signal; freqband is documented
+    # dead-noise so CAUTION is the honest max today, NOT UNVERIFIED.
+    assert d.verdict in (Verdict.CAUTION, Verdict.DO_NOT_USE), d.reasons
+    assert d.verdict is not Verdict.UNABLE_TO_VERIFY
+
+
+def test_low_spai_but_high_freqband_reads_caution_not_trust():
+    # one detector moderately high -> not clean (no false-trust)
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.65}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.20}),
+    ])
+    assert d.verdict is not Verdict.TRUST, d.reasons
+
+
+def test_integrity_fail_never_trusts():
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64, "tampered": True}, status="failed"),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.10}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.10}),
+    ])
+    assert d.verdict is not Verdict.TRUST, d.reasons
