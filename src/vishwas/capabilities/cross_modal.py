@@ -212,6 +212,48 @@ def _havic_check(hav, video_path: Path, wav: Path | None, workdir: Path) -> Chec
 _HAVIC_FBANK_MEAN = -6.9960
 _HAVIC_FBANK_STD = 3.1205
 
+#: Upstream HAVIC segments each clip into ~3.2 s windows before sampling 16
+#: frames and computing the matched audio fbank (video_engine.py split_video /
+#: split_videos_from_csv + src/dataloader._wav2fbank). We replicate a single
+#: window from t=0 (upstream start_time=0).
+_HAVIC_WINDOW_S = 3.2
+#: FaceX-Zoo crop expansion factor (video_engine.py FaceX_Zoo_FaceCropper).
+_HAVIC_FACE_SCALE = 1.3
+#: YuNet onnx candidates for the first-face crop. This box ships no Haar
+#: cascades, so we drive cv2's built-in dnn engine (already imported) with the
+#: small ~230 KB YuNet model. Any candidate file is accepted; the env var lets
+#: a deployment point at its own copy.
+_HAVIC_FACE_MODEL_CANDIDATES = (
+    os.environ.get("VISHWAS_HAVIC_FACE_MODEL", ""),
+    "/opt/verisafe/models/havic/face_detection_yunet_2023mar.onnx",
+    str(Path.home() / "avtools" / "face_detection_yunet_2023mar.onnx"),
+)
+#: module-level cache: None = untried, False = unavailable, else detector obj.
+_HAVIC_FACE_DETECTOR_CACHE = None
+
+
+def _load_face_detector():
+    """Return a YuNet detector (or None) for the HAVIC first-face crop.
+
+    Loads lazily and caches. Degrades to None (whole-frame visual path) when
+    no model file resolves, so the cross-modal capability never hard-fails on
+    boxes without a face model.
+    """
+    global _HAVIC_FACE_DETECTOR_CACHE
+    if _HAVIC_FACE_DETECTOR_CACHE is not None:
+        return _HAVIC_FACE_DETECTOR_CACHE or None
+    import cv2  # type: ignore
+    for cand in _HAVIC_FACE_MODEL_CANDIDATES:
+        if cand and os.path.exists(cand):
+            try:
+                det = cv2.FaceDetectorYN_create(cand, "", (320, 320), 0.6, 0.3, 5000)
+                _HAVIC_FACE_DETECTOR_CACHE = det
+                return det
+            except Exception:
+                continue
+    _HAVIC_FACE_DETECTOR_CACHE = False
+    return None
+
 
 def _kaldi_fbank(
     waveform: np.ndarray,
@@ -249,7 +291,7 @@ def _kaldi_fbank(
     frames -= frames.mean(axis=1, keepdims=True)          # remove_dc_offset
     prev = np.pad(frames, ((0, 0), (1, 0)), mode="edge")  # replicate pad
     frames -= 0.97 * prev[:, :-1]                         # preemphasis
-    frames *= np.hanning(win).astype(np.float32)          # kaldi 'hanning'
+    frames *= (np.hanning(win) ** 2).astype(np.float32)  # kaldi 'hanning' == torch.hann_window(periodic=False), BUT torchaudio's _get_window ALSO raises it to power 2.0 (window.pow_(2.0)) so the net window is hanning^2 — mirror that exactly.
     n_fft = 512                                           # round_to_power_of_two
     spec = np.abs(np.fft.rfft(frames, n=n_fft, axis=1)) ** 2  # use_power
     banks = _kaldi_mel_banks(n_mels, n_fft, sr)           # (n_mels, n_fft // 2)
@@ -292,31 +334,6 @@ def _linear_interp_rows(a: np.ndarray, n_out: int) -> np.ndarray:
     return a[lo] * (1.0 - w) + a[hi] * w
 
 
-def _havic_visual(frames: list[Path], n: int = 16, size: int = 224) -> np.ndarray | None:
-    """Frame paths -> (3, n, 224, 224) float32 RGB in [0, 1].
-
-    Reference eval path is T.Resize((224, 224)) + T.ToTensor() on RGB face
-    crops: bilinear resize plus a plain /255 scale, NO ImageNet mean/std.
-    Vishwas has no face cropper vendored, so full frames are used
-    (documented deviation). If fewer than *n* frames were extracted the last
-    one repeats so short clips stay scorable. Returns None only when no frame
-    is decodable.
-    """
-    tensors: list[np.ndarray] = []
-    last: np.ndarray | None = None
-    for i in range(n):
-        t = _frame_chw(frames[min(i, len(frames) - 1)], size) if frames else None
-        if t is None:
-            if last is None:
-                return None
-            t = last
-        else:
-            last = t
-        tensors.append(t)
-    # (n, 3, H, W) -> (3, n, H, W)  (reference permute(1, 0, 2, 3))
-    return np.transpose(np.stack(tensors), (1, 0, 2, 3)).astype(np.float32)
-
-
 def _frame_chw(fp: Path, size: int = 224) -> np.ndarray | None:
     """Image path -> (3, size, size) float32 RGB in [0,1] (bilinear resize)."""
     try:
@@ -331,25 +348,134 @@ def _frame_chw(fp: Path, size: int = 224) -> np.ndarray | None:
         return None
 
 
+def _havic_visual(frames: list[Path], n: int = 16, size: int = 224) -> np.ndarray | None:
+    """WHOLE-FRAME fallback visual path (image files -> (3, n, s, s) RGB [0,1]).
+
+    Used only when the preferred face-crop video window is unavailable (or a
+    clip can't be opened). Mirrors T.Resize+ToTensor on RGB; no ImageNet
+    mean/std. If fewer than *n* frames the last decodable one repeats.
+    """
+    tensors: list[np.ndarray] = []
+    last: np.ndarray | None = None
+    for i in range(n):
+        t = _frame_chw(frames[min(i, len(frames) - 1)], size) if frames else None
+        if t is None:
+            if last is None:
+                return None
+            t = last
+        else:
+            last = t
+        tensors.append(t)
+    return np.transpose(np.stack(tensors), (1, 0, 2, 3)).astype(np.float32)
+
+
+def _frame_face_chw(frame_bgr: np.ndarray, detector, size: int = 224) -> np.ndarray:
+    """BGR frame -> (3, size, size) float32 RGB in [0, 1].
+
+    Crops the first detectable face (YuNet) expanded by the reference
+    scale=1.3 around its center, matching the upstream FaceX-Zoo cropper
+    (video_engine.py:279-291). Falls back to the whole frame when no face is
+    found (e.g. synthetic controls). Bilinear resize + /255 — no ImageNet
+    mean/std, matching the upstream dataloader preprocess.
+    """
+    import cv2  # type: ignore
+    h, w = frame_bgr.shape[:2]
+    box = None
+    if detector is not None:
+        try:
+            detector.setInputSize((w, h))
+            ok, faces = detector.detect(frame_bgr)
+            if ok and faces is not None and len(faces):
+                x, y, bw, bh = (float(v) for v in faces[0][:4])
+                cx, cy = x + bw / 2.0, y + bh / 2.0
+                nw, nh = bw * _HAVIC_FACE_SCALE, bh * _HAVIC_FACE_SCALE
+                x0 = max(int(cx - nw / 2), 0)
+                x1 = min(int(cx + nw / 2), w)
+                y0 = max(int(cy - nh / 2), 0)
+                y1 = min(int(cy + nh / 2), h)
+                if x1 > x0 and y1 > y0:
+                    box = (x0, y0, x1, y1)
+        except Exception:
+            box = None
+    crop = frame_bgr if box is None else frame_bgr[box[1]:box[3], box[0]:box[2]]
+    im = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+    im = cv2.resize(im, (size, size), interpolation=cv2.INTER_LINEAR)
+    return np.transpose(im.astype(np.float32) / 255.0, (2, 0, 1))
+
+
+def _havic_visual_window(video_path: Path, window_s: float, n: int = 16,
+                         size: int = 224) -> np.ndarray | None:
+    """Full-res frame path -> (3, n, size, size) float32 RGB in [0, 1].
+
+    Decodes *n* uniformly-timed frames (``np.linspace(0, nwin-1, n)`` — the
+    exact upstream sampling, video_engine.py:184) across a *window_s* second
+    window, face-cropping each (whole-frame fallback). Full-res decode, no
+    JPEG/256px loss. Returns None only when no frame decodes.
+    """
+    import cv2  # type: ignore
+    detector = _load_face_detector()
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        total = float(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if not fps or fps <= 0:
+            fps = 25.0
+        nwin = max(1, int(round(window_s * fps)))
+        if total > 0:
+            nwin = min(nwin, int(total))
+        idxs = np.linspace(0, max(nwin - 1, 0), n, dtype=int)
+        tensors: list[np.ndarray] = []
+        last: np.ndarray | None = None
+        for i in idxs:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(i))
+            ok, fr = cap.read()
+            t = _frame_face_chw(fr, detector, size) if (ok and fr is not None) else None
+            if t is None:
+                if last is None:
+                    return None
+                t = last
+            else:
+                last = t
+            tensors.append(t)
+        return np.transpose(np.stack(tensors), (1, 0, 2, 3)).astype(np.float32)
+    finally:
+        cap.release()
+
+
 def _havic_preprocess(video_path: Path, wav: Path | None, workdir: Path) -> tuple[np.ndarray, np.ndarray]:
     """Media file -> (audio_fbank (1024, 128), visual (3, 16, 224, 224)).
 
-    Audio: 16 kHz mono PCM (extract_audio_wav output), whole-clip mean removal
-    (reference: segment - segment.mean()), kaldi fbank, then the reference
-    dataset normalisation (fbank - (-6.9960)) / 3.1205.
-    Visual: 16 frames sampled across the clip via extract_frames (see
-    _havic_visual). Raises ValueError on undecodable inputs — callers convert
-    that to a 'failed' CheckResult.
+    Faithful reproduction of the upstream HAVIC input construction: a single
+    3.2 s analysis window from t=0 (reference segments clips to 3.2 s),
+    * 16 uniformly-timed full-res FIRST-FACE crops at scale=1.3 resized to
+    224 (whole-frame fallback when no face) — the prime saturation fix;
+    * the kaldi log-fbank (-mean) of the MATCHED 3.2 s audio window,
+    interpolated to 1024 frames and normalised by the reference
+    (-6.9960, 3.1205) constants.
+    Raises ValueError on undecodable inputs — callers convert that to a
+    'failed' CheckResult.
     """
-    frames = extract_frames(video_path, workdir / "xm_havic_frames", n=16, jpeg_q=9)
-    if not frames:
-        raise ValueError("no frames extracted for HAVIC visual stream")
-    visual = _havic_visual(frames)
+    dur = probe(video_path).duration_s
+    window_s = min(dur, _HAVIC_WINDOW_S) if dur and dur > 0 else _HAVIC_WINDOW_S
+    # Preferred: full-res face-crop window over the 3.2 s window. If the video
+    # cannot be opened for the face path (or decode fails), degrade to the
+    # whole-frame extract_frames fallback so short/scoped callers still score.
+    visual = _havic_visual_window(video_path, window_s)
     if visual is None:
-        raise ValueError("HAVIC visual frames unreadable")
+        frames = extract_frames(video_path, workdir / "xm_havic_frames", n=16, jpeg_q=9)
+        if not frames:
+            raise ValueError("no frames extracted for HAVIC visual stream")
+        visual = _havic_visual(frames)
+        if visual is None:
+            raise ValueError("HAVIC visual frames unreadable")
     pcm = _load_pcm(wav) if wav is not None else None
     if pcm is None or pcm.size == 0:
         raise ValueError("no decodable PCM for HAVIC audio stream")
+    win_n = int(round(window_s * 16000))
+    if pcm.size > win_n:
+        pcm = pcm[:win_n]          # match the 3.2 s visual window
     fbank = _kaldi_fbank(pcm - pcm.mean())  # reference: segment - segment.mean()
     fbank = (fbank - _HAVIC_FBANK_MEAN) / _HAVIC_FBANK_STD
     return fbank.astype(np.float32), visual
