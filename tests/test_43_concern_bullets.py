@@ -111,3 +111,18 @@ def test_risk_line_still_first_for_all_verdicts():
                      reasons=[], checks=[_ck("aasist_detector", {"prob_deepfake": 0.9})],
                      lang="en")
         assert str(r).splitlines()[0].startswith("RISK LEVEL: "), verdict
+
+
+def test_build_renders_localized_bullets_not_keys():
+    from vishwas.report import ReportBuilder
+    rb = ReportBuilder()
+    checks = [
+        _ck("aasist_detector", {"prob_deepfake": 0.97}),
+        _ck("effort_face_forensics", {"prob_deepfake": 0.83}),
+    ]
+    r = rb.build(target="deepfake_video", verdict=Verdict.DO_NOT_USE, confidence=0.8,
+                 reasons=[], checks=checks, lang="en")
+    text = str(r)
+    assert "the voice shows signs of AI manipulation" in text  # localized bullet
+    assert "concern_audio_ai" not in text  # no raw key leaked
+    assert "Don't forward. Verify with a trusted source." in text

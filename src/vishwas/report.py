@@ -133,7 +133,7 @@ class ReportBuilder:
             tile = t("verdict_tile", lang, label=label,
                      risk=risk.lower(), emoji=emoji)
             parts.append(tile)
-            concerns = concerns_for(checks, target, verdict, lang)
+            concerns = concerns_for(checks, target, verdict, lang, _keys=False)
             if concerns:
                 bullet = "\n".join(f"⚠️ {c}" for c in concerns)
                 head = t("concern_count", lang, n=len(concerns),
