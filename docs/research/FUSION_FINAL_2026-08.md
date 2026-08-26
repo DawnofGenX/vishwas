@@ -21,13 +21,20 @@ Closes out `.hermes/plans/2026-08-25_215218-fusion-next-phase.md` Task 7. All P0
 | `d07e6ca` | test(vt): regression for url→/domains 404 fallback (Finding E) |
 | `fb9b276` | docs: Finding E + govdoc-routing marked resolved; manifest corrections |
 | `e02b054` | feat(audio): **vendor Spectra-AASIST3 arch** (loads 1022/1022) — NOT wired (proof rejected) |
-| (pending) | Package C/D + final report |
+| `9a26788` | fix(cross_modal): faithful HAVIC preprocessing (face-crop + 3.2s window + kaldi hanning²) |
+| `6135cdd` | **OVERFIT FIX (video+image)**: ffpp checkpoint swap + fresh live-corpus video recalibration + SPAI image evidence gate (NOT-binary) |
 
 ## Final measured operating point (video)
-- **84-row video corpus replay:** reals NOT-DNU 34/41 (82%, target ≥80%); fakes ≥CAUTION 100% (38 CAUTION / 5 DNU); the known full-AI row → DO_NOT_USE with fully_generated pattern. Tolerance ±1 row held.
-- **Live WhatsApp proof:** operator AI video → do_not_use conf 0.655, reply delivered; photo → non-DNU reply delivered.
-- **Fresh 2026-08-26 smoke:** `ai_crf45.mp4` → DO_NOT_USE calibrated 0.786 (EFFORT 0.593, HAVIC 1.0, AV anti-correlated, 8 checks); real control → CAUTION.
-- **Suite:** 370 passed / 7 skipped (up from 365; +4 risk-line tests, +1 VT test, +1 i18n sample).
+- **Fresh live corpus (rows_video_v3, 87 clips, 80/20, ffpp checkpoint):** reals NOT-DNU 42/42; fakes ≥CAUTION 42/45; AI anchors 3/3 DNU.
+- **Live CLI (post-merge `6135cdd`):** real FF++ originals 904/086 → CAUTION; 570/245/540/857 → UNVERIFIED (no-audio honest spread-abort, NOT falsely HIGH); AI anchor ai_crf45 → DO_NOT_USE/HIGH.
+- **84-row legacy corpus** (chameleon scale, historical): reals NOT-DNU 34/41 (82%), fakes ≥CAUTION 100%. Superseded by v3.
+- **Live WhatsApp proof (2026-08-25):** operator AI video → do_not_use conf 0.655, reply delivered; photo → non-DNU.
+- **Suite:** 370 passed / 8 skipped.
+
+## Image detector (image_facecheck) — SPAI evidence gate
+- **SPAI** (CVPR'25 spectral, Apache-2.0, vendored `_spai/`, key coverage 1.0, real-median 0.0015 vs AI-median 0.661 separation) replaces the overfitting chameleon checkpoint as `faceforensics.prob` evidence.
+- **NOT-BINARY-GATE (explicit operator directive):** image verdicts CAP at CAUTION — a single learnt-model read never flips a photo to DO_NOT_USE. Rationale: SPAI still false-highs ~6/25 real picsum (their curated artifacts overlap AI median), and freqband is measured dead-noise (real 0.463 vs AI 0.399), so no corroborating second signal exists yet. Balanced config `freqband 0.5 / faceforensics 1.0`.
+- **Honest limit:** images are detective to "suspicious / verify" level, not "definitely fake", until a second image-domain signal is sourced (e.g. latent-effort/genimage as corroboration).
 - **Serving mechanism:** Fusion-v2 pattern classifier + calibrated per-signal fusion. GBDT wiring **rejected by evidence** (OOF AUC 0.499 ≈ LR 0.492 at n=84 — chance), documented in `/home/hermes/fusion_av/feat_vectors/gbdt_report.md`.
 
 ## Package B outcome — audio swap REJECTED (honest)
