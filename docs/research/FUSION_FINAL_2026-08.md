@@ -24,6 +24,8 @@ Closes out `.hermes/plans/2026-08-25_215218-fusion-next-phase.md` Task 7. All P0
 | `9a26788` | fix(cross_modal): faithful HAVIC preprocessing (face-crop + 3.2s window + kaldi hanning²) |
 | `6135cdd` | **OVERFIT FIX (video+image)**: ffpp checkpoint swap + fresh live-corpus video recalibration + SPAI image evidence gate (NOT-binary) |
 | `960d6ab` | feat(url): **vendored MIT xgboost URL-phishing model** as local VT-fallback evidence (`url_phishml`, `phishml.prob` 2.0) |
+| `ba42109` | chore(govdoc): **remove DigiLocker + API-Setu** external-API integration (pure deletion; local QR/signature/official-web verify unchanged) |
+| `be5ab55` | feat(video): **corroboration-gated SYNCED-clean evidence** — real synced video reads LOW/trust; AI+FF++ fakes never trusted |
 
 ## Final measured operating point (video)
 - **Fresh live corpus (rows_video_v3, 87 clips, 80/20, ffpp checkpoint):** reals NOT-DNU 42/42; fakes ≥CAUTION 42/45; AI anchors 3/3 DNU.
