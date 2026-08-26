@@ -28,6 +28,7 @@ def _url_checks_clean() -> list[CheckResult]:
     return [
         _ck("vt_url_reputation", "ok", {"positives_ratio": 0.0, "vt_total_engines": 91}),
         _ck("phish_heuristics", "ok", {"score_norm": 0.01, "young_domain": False}),
+        _ck("url_phishml", "ok", {"phishing_prob": 0.05, "n_lexical": 16, "n_network": 7}),
         _ck("ssrf_guard", "ok", {"blocked": 0.0}),
         _ck("url_redirects", "ok", {"suspicious_hops": 0}),
         _ck("url_download_revalidated", "ok", {"ext_mismatch": False, "verified_kind": "text"}),

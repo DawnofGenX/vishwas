@@ -1,5 +1,6 @@
 """Capability modules."""
 from .url_phishing import UrlPhishingCapability
+from .url_mal_ml import UrlPhishMlCapability
 from .malware_file import MaliciousFileCapability
 from .gov_document import GovDocumentCapability
 from .deepfake_video import DeepfakeVideoCapability
@@ -8,7 +9,7 @@ from .image_facecheck import ImageFaceCheckCapability
 from .cross_modal import CrossModalCapability
 
 __all__ = [
-    "UrlPhishingCapability", "MaliciousFileCapability", "GovDocumentCapability",
+    "UrlPhishingCapability", "UrlPhishMlCapability", "MaliciousFileCapability", "GovDocumentCapability",
     "DeepfakeVideoCapability", "DeepfakeAudioCapability", "ImageFaceCheckCapability",
     "CrossModalCapability",
 ]
@@ -28,6 +29,10 @@ def default_capabilities(available_deps: set[str]) -> dict[str, list]:
     }
     try:
         caps["url_phishing"].append(UrlPhishingCapability())
+    except Exception:
+        pass
+    try:
+        caps["url_phishing"].append(UrlPhishMlCapability())  # local ML fallback when VT inconclusive
     except Exception:
         pass
     try:

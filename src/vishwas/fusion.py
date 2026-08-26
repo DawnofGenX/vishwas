@@ -69,6 +69,7 @@ WEIGHTS: dict[str, dict[str, float]] = {
     "url_phishing": {
         "vt.url_positives_ratio": 4.0,
         "phish.heuristic_score": 2.5,
+        "phishml.prob": 2.0,
         "domain.young": 1.0,
         "redirect.suspicious_hop": 1.5,
         "ssrf.blocked": 1.5,
@@ -158,6 +159,7 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
     # --- url_phishing ---
     "vt.url_positives_ratio": ("vt_url_reputation", "positives_ratio", KIND_DEFAULT_NUM, False),
     "phish.heuristic_score": ("phish_heuristics", "score_norm", KIND_DEFAULT_NUM, False),
+    "phishml.prob": ("url_phishml", "phishing_prob", KIND_DEFAULT_NUM, True),
     "domain.young": ("phish_heuristics", "young_domain", KIND_DEFAULT_NUM, False),
     "redirect.suspicious_hop": ("url_redirects", "suspicious_hops", KIND_DEFAULT_NUM, False),
     "ssrf.blocked": ("ssrf_guard", "blocked", KIND_DEFAULT_NUM, False),

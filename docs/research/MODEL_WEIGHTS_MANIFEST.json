@@ -245,6 +245,19 @@
       "cpu_viable_on_i5_8250U": "yes (<250MB each)",
       "est_seconds_per_clip_cpu": null,
       "notes": "FF++ c23-trained face-swap detectors \u2014 the fix direction for the EFFORT C23 inversion."
+    },
+    {
+      "gate": "url-phishml",
+      "real": true,
+      "artifact": "malindard/phishing-checker-flask (MIT)",
+      "url": "https://github.com/malindard/phishing-checker-flask",
+      "sha256": null,
+      "size_mb": 2.62,
+      "license": "MIT",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "yes (16 lexical features offline)",
+      "est_seconds_per_clip_cpu": "<0.1s per URL",
+      "notes": "Vendored 2026-08-26 (src/vishwas/_urlphish_vendor/, XGBoost 23-feature URL-phishing classifier + StandardScaler). Offline-first url_phishing evidence signal fusing into fusion phishml.prob weight 2.0; engaged when VirusTotal is low/unavailable (local fallback). Trust bar AUC 1.0000 on a 21-URL known-benign/known-phish mini-corpus. Needs xgboost+tldextract+pandas in the docling-python tree."
     }
   ],
   "summary": {
