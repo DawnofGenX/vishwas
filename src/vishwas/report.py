@@ -34,6 +34,15 @@ class ReportBuilder:
         Verdict.UNABLE_TO_VERIFY: "verdict_unable",
     }
 
+    # UX 2026-08-26: deterministic risk level leading every reply. Derived
+    # ONLY from the verdict — no new scoring, presentation layer only.
+    _RISK_OF_VERDICT = {
+        Verdict.TRUST: "LOW",
+        Verdict.CAUTION: "MEDIUM",
+        Verdict.DO_NOT_USE: "HIGH",
+        Verdict.UNABLE_TO_VERIFY: "UNVERIFIED",
+    }
+
     def build(self, *, target: str, verdict: Verdict, confidence: float,
               reasons: list[str], checks: list[CheckResult], lang: str = "en",
               artifact_name: str = "", llm_advice: str | None = None,
@@ -43,7 +52,10 @@ class ReportBuilder:
         # UX fix (2026-08-25): UNABLE replies carry NO confidence line — a
         # confidence number on unverified content overclaims certainty exactly
         # when we have the least evidence (the assured-on-empty-evidence class).
-        parts = [t(key, lang)]
+        # risk level leads every reply (2026-08-26), then the plain-language
+        # verdict sentence — template-first ordering preserved underneath.
+        parts = [t("risk_line", lang, level=self._RISK_OF_VERDICT[verdict]),
+                 t(key, lang)]
         n_ran = sum(1 for c in checks if c.status in ("ok", "degraded"))
         # Fusion v2: surface the deepfake pattern explanation if one fired.
         pat = next((r.split(":", 1)[1] for r in reasons

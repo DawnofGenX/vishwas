@@ -55,6 +55,23 @@ _DEFAULTS: dict[str, dict[str, str]] = {
         # draft (bn); see docs/i18n/bn.draft.md
         "bn": "এখন সেটা পরীক্ষা করছি। অনুগ্রহ করে একটু মিনিট অপেক্ষা করুন।",
     },
+    # UX 2026-08-26: every reply LEADS with a deterministic risk level derived
+    # from the verdict (report.py _RISK_OF_VERDICT); levels stay English tokens
+    # across languages (language-neutral, same convention as gap tokens).
+    "risk_line": {
+        "en": "RISK LEVEL: %(level)s",
+        "hi": "जोखिम स्तर: %(level)s",
+        # draft (ta); see docs/i18n/ta.draft.md
+        "ta": "ஆபத்து நிலை: %(level)s",
+        # draft (te); see docs/i18n/te.draft.md
+        "te": "ప్రమాద స్థాయి: %(level)s",
+        # draft (ml); see docs/i18n/ml.draft.md
+        "ml": "അപകട നില: %(level)s",
+        # draft (kn); see docs/i18n/kn.draft.md
+        "kn": "ಅಪಾಯದ ಮಟ್ಟ: %(level)s",
+        # draft (bn); see docs/i18n/bn.draft.md
+        "bn": "ঝুঁকির মাত্রা: %(level)s",
+    },
     "verdict_trust": {
         "en": "Good news: this looks genuine. I found no signs of tampering or fraud.",
         "hi": "सुखबत: यह असली लग रहा है। बदलाव या धोखाधड़ी के कोई चिह्न नहीं मिले।",

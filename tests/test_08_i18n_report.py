@@ -19,6 +19,32 @@ def test_supported_languages_cover_design_set():
     assert set(_SUPPORTED) >= {"en", "hi"}
 
 
+# ------------------------------------------------- risk level first line ----
+# UX 2026-08-26: every reply LEADS with a deterministic risk level derived
+# from the verdict; plain-language explanation follows underneath.
+def _risk_first_line(**kw):
+    r = ReportBuilder().build(
+        target=kw.pop("target", "deepfake_video"),
+        reasons=[], checks=[], lang="en", **kw)
+    return str(r).splitlines()[0]
+
+def test_risk_line_high_for_do_not_use():
+    assert _risk_first_line(verdict=Verdict.DO_NOT_USE, confidence=0.8) \
+        .startswith("RISK LEVEL: HIGH")
+
+def test_risk_line_medium_for_caution():
+    assert _risk_first_line(verdict=Verdict.CAUTION, confidence=0.5) \
+        .startswith("RISK LEVEL: MEDIUM")
+
+def test_risk_line_low_for_trust():
+    assert _risk_first_line(target="gov_document", verdict=Verdict.TRUST,
+                            confidence=0.9).startswith("RISK LEVEL: LOW")
+
+def test_risk_line_unverified_for_unable():
+    assert _risk_first_line(verdict=Verdict.UNABLE_TO_VERIFY, confidence=0.0) \
+        .startswith("RISK LEVEL: UNVERIFIED")
+
+
 def test_detect_language_does_not_crash_and_maps_sanskrit_free_text():
     assert detect_language("") in set(_SUPPORTED) | {"en"}
     assert detect_language("नमस्ते कृपया यह जाँच करें") == "hi" or \

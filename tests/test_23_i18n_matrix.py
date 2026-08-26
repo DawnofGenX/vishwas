@@ -47,6 +47,7 @@ _SAMPLE_FMT = {
     "cap": "gov-document",
     "verdict": "caution",
     "n": "3",
+    "level": "HIGH",
 }
 
 
