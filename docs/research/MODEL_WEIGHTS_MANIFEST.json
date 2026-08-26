@@ -53,7 +53,7 @@
     },
     {
       "gate": "demamba",
-      "real": true,
+      "real": false,
       "artifact": "chenhaoxing/DeMamba (arXiv 2405.19707)",
       "url": null,
       "sha256": null,
@@ -62,7 +62,7 @@
       "public_no_auth": true,
       "cpu_viable_on_i5_8250U": "n/a",
       "est_seconds_per_clip_cpu": null,
-      "notes": "PARTIAL: source zip ONLY (5.96MB), NO public checkpoint yet \u2014 nothing loadable to download"
+      "notes": "WEIGHTS NEVER PUBLISHED (re-verified 2026-08-25/26): official repo chenhaoxing/DeMamba is training-code + dataset only \u2014 no releases, no .pth/.ckpt anywhere in tree; no HF mirrors. Code Apache-2.0; GenVideo dataset on ModelScope. Slot retired from serving (commit f627e70); see docs/research/WEIGHT_HUNT_2026-08-25.md \u00a72."
     },
     {
       "gate": "fakemamba",
@@ -167,6 +167,84 @@
       "cpu_viable_on_i5_8250U": "moderate",
       "est_seconds_per_clip_cpu": null,
       "notes": "DEPS: see app.py IMAGE_FACE path \u2014 weights resolved via OpenCV/cv2 data, small size"
+    },
+    {
+      "gate": "spectra-aasist3",
+      "real": true,
+      "artifact": "lab260/Spectra-AASIST3 (Speech Anti-Spoofing Arena)",
+      "url": "https://huggingface.co/lab260/Spectra-AASIST3/resolve/main/model.safetensors",
+      "sha256": null,
+      "size_mb": 1276.33,
+      "license": "Apache-2.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "gpu-preferred (319M params; ONNX twin available)",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "Independently re-scored EER 0.97% ASVspoof2019-LA (pinned scores in-repo). Downloaded 2026-08-26 to /opt/verisafe/models/aasist3/ for Package B swap; preprocessing recipe in docs/research/WEIGHT_HUNT_2026-08-25.md \u00a71."
+    },
+    {
+      "gate": "syncnet-v2",
+      "real": true,
+      "artifact": "joonson/syncnet_python",
+      "url": "http://www.robots.ox.ac.uk/~vgg/software/lipsync/data/syncnet_v2.model",
+      "sha256": null,
+      "size_mb": 54.57,
+      "license": "MIT",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "yes",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "Candidate AV-coherence evidence channel (WEIGHT_HUNT \u00a74 top pick)."
+    },
+    {
+      "gate": "batfd",
+      "real": true,
+      "artifact": "ControlNet/LAV-DF (CVPR'23 line)",
+      "url": "https://huggingface.co/ControlNet/LAV-DF/resolve/main/batfd_default.ckpt",
+      "sha256": null,
+      "size_mb": 66.1,
+      "license": "CC BY-NC 4.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "moderate",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "AV temporal forgery detector candidate; NC license caveat."
+    },
+    {
+      "gate": "ns-gvd",
+      "real": true,
+      "artifact": "ZSHsh98/NSG-VD (NeurIPS 2025 Spotlight)",
+      "url": "https://raw.githubusercontent.com/ZSHsh98/NSG-VD/main/ckpts/standard-Pika-mp.pth",
+      "sha256": null,
+      "size_mb": 1.7,
+      "license": "Apache-2.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "no (needs diffusion prior runtime)",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "MMD-statistic output vs reference set \u2014 not a calibrated P(fake); HIGH integration cost."
+    },
+    {
+      "gate": "skyra",
+      "real": true,
+      "artifact": "JoeLeelyf/Skyra-RL (CVPR 2026)",
+      "url": "https://huggingface.co/JoeLeelyf/Skyra-RL",
+      "sha256": null,
+      "size_mb": 16590.0,
+      "license": "CC BY 4.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "no (Qwen2.5-VL-7B, vLLM lane ~17GB bf16)",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "Reasoning-grade full-AI-video verdict ceiling; fits RTX 5090 24GB bf16."
+    },
+    {
+      "gate": "deepfakebench-pack",
+      "real": true,
+      "artifact": "SCLBD/DeepfakeBench v1.0.1 (UCF/SPSL/F3Net et al.)",
+      "url": "https://github.com/SCLBD/DeepfakeBench/releases/tag/v1.0.1",
+      "sha256": null,
+      "size_mb": 87.8,
+      "license": "CC BY-NC 4.0",
+      "public_no_auth": true,
+      "cpu_viable_on_i5_8250U": "yes (<250MB each)",
+      "est_seconds_per_clip_cpu": null,
+      "notes": "FF++ c23-trained face-swap detectors \u2014 the fix direction for the EFFORT C23 inversion."
     }
   ],
   "summary": {
@@ -203,14 +281,14 @@
       "note": "HABLA_WavLM_AASIST (WavLM-Large + HtrgGAT) vendored 2026-08-21; 733/733 key match; see docs/research/ARCH_VENDOR_EVIDENCE_2026-08-21.md"
     },
     "effort": {
-     "vendored": true,
-     "license": "CC-BY-NC-4.0",
-     "note": "Effort-AIGI-Detection (CLIP ViT-L/14 + OrthAlign) vendored 2026-08-21; 681/681 key match; chameleon primary"
+      "vendored": true,
+      "license": "CC-BY-NC-4.0",
+      "note": "Effort-AIGI-Detection (CLIP ViT-L/14 + OrthAlign) vendored 2026-08-21; 681/681 key match; chameleon primary"
     },
     "havic": {
-     "vendored": true,
-     "license": "MIT",
-     "note": "JielunPeng/HAVIC HAVIC_FT vendored 2026-08-21 via _havic backend + timm shim; 456-key coverage; numpy kaldi-fbank port validated vs torchaudio <=5e-4; smoke load 8.6s infer 5.1s NOT SLOW; pt200 fallback is headless pretrain payload (cannot score, documented)"
+      "vendored": true,
+      "license": "MIT",
+      "note": "JielunPeng/HAVIC HAVIC_FT vendored 2026-08-21 via _havic backend + timm shim; 456-key coverage; numpy kaldi-fbank port validated vs torchaudio <=5e-4; smoke load 8.6s infer 5.1s NOT SLOW; pt200 fallback is headless pretrain payload (cannot score, documented)"
     }
-    }
+  }
 }

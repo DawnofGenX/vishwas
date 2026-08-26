@@ -54,8 +54,7 @@ video → `[heavy] effort_face_forensics ok {"prob_deepfake": 0.304,
   GAPS row claiming local AV "active" is overstated until fixed.
 - **C. YARA off in practice** — requires `VISHWAS_YARA_RULES`; no rules
   bundle ships in-repo → unavailable in every run.
-- **D. gov_document unreachable via CLI file path** — router checks
-  `_looks_gov_artifact(art_filename=target_hint)`, never the real filename;
-  CLI `--file` forces empty hint → PDFs route `document_generic`, which
-  emitted zero usable signals even for a text-layer PDF. Purge still clean;
-  capability reachability gap recorded.
+- **D. gov_document unreachable via CLI file path — RESOLVED 2026-08-21
+  (Finding D fix):** router now checks the real artifact filename
+  (`original_filename`), not just the target_hint; live-probed 2026-08-26:
+  `aadhaar.pdf` via CLI `--file` routes gov_document and runs the capability.
