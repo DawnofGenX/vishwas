@@ -48,6 +48,10 @@ _SAMPLE_FMT = {
     "verdict": "caution",
     "n": "3",
     "level": "HIGH",
+    "emoji": "🔴",
+    "label": "LIKELY FAKE",
+    "risk": "high",
+    "plural": "s",
 }
 
 

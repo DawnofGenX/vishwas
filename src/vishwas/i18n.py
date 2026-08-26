@@ -186,6 +186,56 @@ _DEFAULTS: dict[str, dict[str, str]] = {
         # draft (bn); see docs/i18n/bn.draft.md
         "bn": "পরামর্শ: অচেনা নম্বর থেকে আসা লিংকে কখনো চাপবেন না। সরকারি প্রতিষ্ঠান WhatsApp লিংকে পাসওয়ার্ড চায় না।",
     },
+    # UX 2026-08-26: richer narrative reply. en-only for now; other langs fall
+    # back to en via t() (no native-review gate — translate when a reviewer lands).
+    "verdict_tile": {
+        "en": "%(emoji)s %(label)s · %(risk)s Risk",
+        "hi": "%(emoji)s %(label)s · %(risk)s जोखिम",
+    },
+    "concern_count": {
+        "en": "It found %(n)s key concern%(plural)s:",
+        "hi": "इसमें %(n)s प्रमुख चिंता%(plural)s मिलीं:",
+    },
+    "concern_audio_ai": {
+        "en": "the voice shows signs of AI manipulation",
+        "hi": "आवाज़ में AI हेरफेर के संकेत दिखते हैं",
+    },
+    "concern_video_face": {
+        "en": "the face appears digitally altered",
+        "hi": "चेहरा डिजिटल रूप से बदला हुआ प्रतीत होता है",
+    },
+    "concern_av_sync": {
+        "en": "the voice and moving lips do not match (audio/video inconsistency)",
+        "hi": "आवाज़ और होंठों की हरकत मेल नहीं खाते (ऑडियो/वीडियो असंगति)",
+    },
+    "concern_url_flag": {
+        "en": "the link has a poor security reputation",
+        "hi": "लिंक की सुरक्षा प्रतिष्ठा खराब है",
+    },
+    "concern_url_typo": {
+        "en": "the address looks like a disguised copy of a real website",
+        "hi": "पता किसी असली वेबसाइट की नक़ल लगता है",
+    },
+    "concern_doc_forged": {
+        "en": "the document shows signs of forgery",
+        "hi": "दस्तावेज़ में जालसाज़ी के संकेत दिखते हैं",
+    },
+    "concern_unverified_source": {
+        "en": "the claim could not be verified through reliable sources",
+        "hi": "विश्वसनीय स्रोतों से इस दावे की पुष्टि नहीं हो सकी",
+    },
+    "recommend_dont_forward": {
+        "en": "Don't forward. Verify with a trusted source.",
+        "hi": "आगे न भेजें। किसी विश्वसनीय स्रोत से जाँच करें।",
+    },
+    "recommend_verify_source": {
+        "en": "Don't forward or pay until you check with the official source.",
+        "hi": "आधिकारिक स्रोत से जाँच किए बिना आगे न भेजें या पैसे न दें।",
+    },
+    "recommend_nothing": {
+        "en": "No action needed, but a human double-check is still safer.",
+        "hi": "कोई कार्रवाई ज़रूरी नहीं, लेकिन मानवीय जाँच अब भी सुरक्षित है।",
+    },
     "progress_file": {
         "en": "Scanning the file (%(name)s)…",
         "hi": "फ़ाइल की स्कैनिंग जारी है (%(name)s)…",
