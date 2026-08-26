@@ -14,3 +14,7 @@ output/renders/
 /deploy/openwa-reply.env
 /deploy/verisafe-secrets.env
 /deploy/vishwas-secrets.env
+
+# vendored Spectra-AASIST3 base-encoder weights stay OUT of git (1.27GB); the
+# arch reads them from /opt/verisafe/models/aasist3/wav2vec2-xls-r-300m/
+src/vishwas/model_archs/_spectra/wav2vec2-xls-r-300m/*.bin
