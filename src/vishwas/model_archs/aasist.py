@@ -51,6 +51,53 @@ KEY-MAP ASSUMPTIONS (honesty rule — every non-obvious reconstruction choice):
       contract we return the SPOOF posterior: softmax(logits)[0] in [0,1].
   A7. Inference runs eval() + no_grad; BatchNorm running stats come from the
       checkpoint (num_batches_tracked present for all BN layers).
+
+SATURATION POST-MORTEM (2026-08-25, GPU probes 1–19, full evidence in session)
+==============================================================================
+SYMPTOM (after commit 7efa7fb fixed the pre-norm invariance): on the 240-clip
+gold ASVspoof-2019 LA corpus every speech clip scores spoof posterior ~0.9998;
+AUC 0.5125; confusion@0.5 = all-spoof.
+
+REFUTED HYPOTHESES (do NOT retry):
+  1. "Training fed RAW (pre-final-LN) encoder output" — refuted three ways:
+     (a) optimizer forensics: frontend.model.encoder.layer_norm.{w,b} carry
+         non-zero Adam exp_avg/exp_avg_sq (|exp_avg|≈9e-3) => final LN was in
+         the training graph; (b) backend.first_bn running stats (mean 0.243,
+         var 0.0386) match LL-output stats of LN'd features (Δ 0.04/9%) and
+         are ~200x off raw features (+39/783); (c) HF config.json for
+         WavLM-Large: do_stable_layer_norm=true.
+  2. "extractor_mode should be layer_norm" — param shapes identical but
+     witness B says training ran with GroupNorm blocks ('default'); LN-mode
+     features give healthy score SPREAD but AUC 0.5268 (chance).
+  3. "pad/znorm/BN-mode/batch-size transform mismatch" — swept exhaustively
+     (probe 5): no combination exceeds AUC 0.53 with real spread.
+  4. "Vendored frontend computes differently" — probe 18 per-layer sweep:
+     checkpoint head is ~saturated at EVERY tap enc0..enc23 (AUC 0.41–0.55,
+     medians ≥0.99 everywhere); HF-cross-validated reference features also
+     give chance-level AUC through the same backend.
+
+ROOT CAUSE: the shipped checkpoint's backend+head weights implement NO
+input-dependent decision function at eval mode. Controls prove it is not a
+frontend/wiring problem:
+  - speech-vs-pure-tone through these very weights: AUC 0.0000 (inverted,
+    confident, wrong) while ANY logistic readout of the same frozen
+    representations separates tone perfectly (AUC 1.0000);
+  - train-partition ASVspoof clips saturate identically (AUC 0.4974);
+  - frozen logmel-stats linear probe reaches only 0.668±0.071 5-fold CV and
+    wavlm-meanstd 0.566±0.111 on this corpus — the corpus itself is hard/
+    partially mislabelled relative to what any shallow readout can express,
+    so the recorded best_metric=0.167 EER cannot be reproduced from these
+    weights under any input transform tried.
+CONCLUSION: DeepFense/HABLA_WavLM_AASIST_NoAug_Seed42 (epoch 28) is a
+degenerate/unreproducible artifact for inference. NOT FIXABLE by wiring.
+RECOMMENDED SWAP: lab260/Spectra-AASIST3 (Apache-2.0, self-contained
+safetensors 1.28 GB, XLS-R+KAN-AASIST, independently re-scored EER 0.97% on
+ASVspoof2019-LA, pinned score files in-repo; preprocessing: 16 kHz ->
+preemphasis 0.97 -> first 64,600 samples; bonafide logit INVERTED to p_spoof).
+Backups: lab260/AASIST3 (CC BY-NC), ash56/ssl-aasist (Apache),
+arnabdas8901/aasist-trained-asvspoof2024 (MIT).
+The gate must remain quarantined (scores not trusted) until swapped.
+
 """
 from __future__ import annotations
 
