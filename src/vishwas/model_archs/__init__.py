@@ -23,6 +23,9 @@ _FAMILIES = {
     # bidirectional Mamba backend; see model_archs/xlsrmamba.py provenance
     # header.
     "xlsrmamba": "xlsrmamba",
+    # SPAI (CVPR'25 spectral AI-image detector, Apache-2.0) — the image_facecheck
+    # heavy gate; see model_archs/spai.py provenance header + _spai/PROVENANCE.md.
+    "spai": "spai",
 }
 
 

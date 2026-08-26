@@ -76,10 +76,9 @@ def test_single_weak_signal_is_caution_not_unable():
 
 
 def test_face_swap_partial_pattern():
-    # effort high (calibrated: 1.0*0.80-0.35=0.45 > 0.60? no -> use 0.97 raw
-    # which calibrates to 0.62) but AV OK (<0.30) -> face_swap_partial,
-    # not fully_generated. Post-recalibration the effort threshold maps to
-    # raw >= 0.95 on this scale.
+    # effort high (raw 0.98 -> calibrated 1.0*0.98-0.55=0.43 > 0.40 threshold)
+    # but AV OK (<0.30) -> face_swap_partial, not fully_generated. Post-2026-08-26
+    # the effort threshold maps to calibrated >0.40 on the -0.55 scale.
     checks = [
         _ck("effort_face_forensics", {"prob_deepfake": 0.98}),
         _ck("cross_modal_av", {"av_correlation": 0.2, "alignment_class": "weakly_synced",

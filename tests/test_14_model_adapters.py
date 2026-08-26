@@ -285,12 +285,17 @@ def test_image_preprocess_chw_normalized():
     assert float(chw.max()) <= 1.0
 
 
-def test_face_preprocess_112_batch():
+def test_face_preprocess_spai_passthrough():
+    """image_facecheck heavy gate now routes through the SPAI arch-adapter whose
+    score() performs its own decode + [0,1] + pad-to-224 preprocessing (upstream
+    `spai infer` contract). The adapter's preprocess is therefore a pass-through —
+    it must NOT reshape/centre-crop the 300x300 input (the old 112x112 face-crop
+    convention applied to the EFFORT fallback, which SPAI replaces)."""
     ad = resolve("VISHWAS_IMAGE_FACE_WEIGHTS")
     crop = (np.random.rand(300, 300, 3) * 255).astype(np.uint8)
-    batch = ad.preprocess(crop)
-    assert batch.shape == (1, 3, 112, 112)
-    assert batch.dtype == np.float32
+    out = ad.preprocess(crop)
+    assert out is crop or np.array_equal(out, crop)  # identical passthrough array
+    assert getattr(out, "shape", None) == (300, 300, 3)
 
 
 def test_video_sequence_preprocess_batches_frames():

@@ -39,6 +39,16 @@ def _load_image(p: Path, side: int = 512) -> np.ndarray | None:
         return None
 
 
+def _load_original_image(p: Path) -> np.ndarray | None:
+    """Full-resolution BGR decode (no resize). SPAI's heavy gate is any-resolution
+    spectral and needs the ORIGINAL pixels; the fixed 512 resize collapses it."""
+    try:
+        import cv2  # type: ignore
+        return cv2.imread(str(p), cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+
+
 def _spectral_band_anomaly(img: np.ndarray) -> float:
     """Mid-frequency energy ratio proxy. Swap/blend seams and GAN artifacts
     typically push energy into specific mid bands; real photos have a smoother
@@ -108,9 +118,28 @@ class ImageFaceCheckCapability:
                                 "band_anomaly": anomaly,
                                 "source": "offline_frequency_heuristics"},
                                "offline frequency-band scan (fallback when face models absent)"))
-        # gated learned model
+        # gated learned model — SPAI heavy gate (dedicated AI-image detector,
+        # CVPR'25): VISHWAS_IMAGE_FACE_WEIGHTS -> resolve('VISHWAS_IMAGE_FACE_WEIGHTS')
+        # gives the spai arch-adapter. EFFORT fallback below is backward-compat
+        # ONLY when the image-specific env is unset.
+        # SPAI is ANY-RESOLUTION SPECTRAL: feeding it the fixed 512x512 resize
+        # (img, used above for the freqband heuristic) collapsed its detection —
+        # it needs the ORIGINAL-resolution photo. Load the full-res image for the
+        # heavy gate; the freqband heuristic keeps the 512 path unchanged.
+        heavy_img = _load_original_image(art.path)
+        if heavy_img is None:
+            heavy_img = img
         env, _p = _resolved_weights_env()
         adapter = _resolve_adapter(env) if env else None
+        if env == "VISHWAS_IMAGE_FACE_WEIGHTS" and adapter is None:
+            # Belt-and-braces: if the dedicated spai adapter ever fails to
+            # register, DO NOT silently fall through to the EFFORT chameleon gate
+            # (the overfit that motivated this fix).
+            out.append(CheckResult("image_face_forensics", "heavy", "unavailable",
+                                   {"missing_dependency": "model-weights"},
+                                   "SPAI image-face gate not provisioned; frequency heuristic carries"))
+            out.extend(self._qr_evidence_for_gov_image(art))
+            return out
         m = _load_model()
         if m is None:
             out.append(CheckResult("image_face_forensics", "heavy", "unavailable",
@@ -118,7 +147,7 @@ class ImageFaceCheckCapability:
                                    "face-forensics weights not provisioned; frequency heuristic carries"))
         else:
             try:
-                p = _infer_face(adapter, m, img)
+                p = _infer_face(adapter, m, heavy_img)
                 if p is None:
                     out.append(CheckResult("image_face_forensics", "heavy", "degraded",
                                            {}, "face-forensics model produced no usable score"))
@@ -135,7 +164,9 @@ class ImageFaceCheckCapability:
 
 def _resolved_weights_env() -> tuple[str | None, str | None]:
     """Return (env_name, weight_path) honouring the documented override order:
-    VISHWAS_IMAGE_FACE_WEIGHTS first, else fall back to VISHWAS_EFFORT_WEIGHTS."""
+    VISHWAS_IMAGE_FACE_WEIGHTS (SPAI heavy gate) first; else fall back to
+    VISHWAS_EFFORT_WEIGHTS for backward-compat ONLY when the image-specific env
+    is unset."""
     p = os.environ.get("VISHWAS_IMAGE_FACE_WEIGHTS")
     if p:
         return "VISHWAS_IMAGE_FACE_WEIGHTS", p

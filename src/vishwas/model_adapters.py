@@ -205,6 +205,9 @@ _ARCH_FAMILIES = {
     "VISHWAS_FAKEMAMBA_WEIGHTS": "fakemamba",
     # XLSR-Mamba-LA (MIT) — see model_archs/xlsrmamba.py.
     "VISHWAS_XLSRMAMBA_WEIGHTS": "xlsrmamba",
+    # SPAI (CVPR'25 spectral AI-image detector, Apache-2.0) fills the image
+    # face-check slot; see model_archs/spai.py + _spai/PROVENANCE.md.
+    "VISHWAS_IMAGE_FACE_WEIGHTS": "spai",
 }
 
 ARCH_UNAVAILABLE_REASON = "weight file loaded but architecture unavailable"
@@ -479,6 +482,13 @@ def _video_frame_preprocess(raw: Any) -> np.ndarray:
     return _seq_tensor([raw])
 
 
+def _spai_preprocess(raw):
+    """Pass-through for the SPAI heavy gate: spai.ArchSpec.score() performs its
+    own decode + [0,1] + pad-to-224 preprocessing faithfully to upstream
+    `spai infer`, so the adapter does no reshaping here."""
+    return raw
+
+
 def _face_crops_preprocess(raw: Any) -> np.ndarray:
     """Face crop(s) -> (N, 3, 112, 112) embedding-style input."""
     if isinstance(raw, np.ndarray):
@@ -586,8 +596,18 @@ ADAPTERS: dict[str, Adapter] = {
     "VISHWAS_IMAGE_FACE_WEIGHTS": Adapter(
         env_name="VISHWAS_IMAGE_FACE_WEIGHTS",
         family="face",
-        preprocess=_face_crops_preprocess,
+        # SPAI heavy gate (CVPR'25 spectral AI-image detector): preprocess is a
+        # pass-through — spai.ArchSpec.score() decodes + normalises + pads, then
+        # runs upstream-faithful inference. Wired through the arch-aware seam so
+        # a provisioned checkpoint loads as a READY ArchModelWrapper (.predict ->
+        # calibrated p_fake). Env unset / arch or weights unavailable -> None +
+        # last_reason; the freqband heuristic fallback carries unchanged. Before
+        # this change this slot fell back to VISHWAS_EFFORT_WEIGHTS (the
+        # overfitting chameleon gate).
+        preprocess=_spai_preprocess,
         extract_prob=_auto_extract,
+        _load=lambda p: _arch_aware_load(
+            p, "spai", env_name="VISHWAS_IMAGE_FACE_WEIGHTS"),
     ),
 }
 

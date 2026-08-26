@@ -92,20 +92,29 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # that only diluted every verdict's denominator. The capability still
         # emits its unavailable check (debug shows WHY); if DeMamba weights ever
         # land, re-add with calibration. _EXPECTED_PROB_DET updated to match.
-        "effort.prob": 2.5,
+        "effort.prob": 1.5,
         # demamba retired (see note above). Post-retirement recalibration
         # (2026-08-25): effort cal b -0.35 -> -0.45 and frameheur weight
-        # 1.5 -> 1.0, chosen on the 84-row corpus to keep FF++ reals out of
-        # DNU (34/41 = 82%) while every fake still lands >= CAUTION (4 DNU).
-        # AI anchor unchanged: DO_NOT_USE conf ~0.66 pattern fully_generated.
+        # 1.5 -> 1.0, then 2026-08-26 ffpp-checkpoint + fresh-corpus
+        # recalibration (W1): effort 2.5->1.5, av_risk 2.0->3.5, havic
+        # 1.2->0.8, effort affine b -0.45->-0.55, chosen on rows_video_v3
+        # (87 live-derived clips, 80/20 split). REALS NOT-DNU 42/42 on v3,
+        # fakes >=CAUTION 42/45, AI anchors 3/3 DNU; live 904/570/245/540
+        # all -> CAUTION (false-HIGH fixed), ai_crf45 -> DNU.
+        # havic kept detect-only (0.8): W3 proved the checkpoint is
+        # degenerate-constant-fake-bias (sigmoid ~0.98 on everything) — safe
+        # only because corpus reals are silent (known-gap); a modest weight
+        # limits the unseen real-with-audio overfit risk.
         "frameheur.prob": 1.0,
         # AV-sync + HAVIC were present in the emitted checks but NOT in this
         # target's weight map (fusion gap, 2026-08-25): an operator's AI video
         # carried av=-2.0 (anti_correlated) and havic=1.0 yet they contributed
         # ZERO to the verdict. Wire them in; pattern layer uses them for
-        # corroboration. HAVIC demoted (saturates ~1.0, poor separation).
-        "av_risk_addition": 2.0,
-        "havic.prob_inconsistent": 1.2,
+        # corroboration. 2026-08-26: av_risk raised to 3.5 (it is the real
+        # cross-modal separator — W3 measured AI anti_correlated 0.5 vs real
+        # weakly_synced 0.1); HAVIC demoted to 0.8 detect-only (degenerate).
+        "av_risk_addition": 3.5,
+        "havic.prob_inconsistent": 0.8,
     },
     "deepfake_audio": {
         "fakemamba.prob": 2.5,
@@ -119,8 +128,14 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "havic.prob_inconsistent": 2.5,
     },
     "image_facecheck": {
-        "freqband.prob": 1.5,
-        "faceforensics.prob": 2.5,
+        # 2026-08-26 NOT-BINARY-GATE (operator directive + measured evidence):
+        # SPAI (CVPR'25 spectral, vendored W2) feeds faceforensics.prob as an
+        # EVIDENCE signal, but a single learned-model read must NEVER flip an
+        # image to DO_NOT_USE — that was the chameleon overfit class. freqband
+        # measured dead-noise (real med 0.463 vs AI 0.399 — overlapping), so no
+        # second independent signal exists yet → images cap at CAUTION below.
+        "freqband.prob": 0.5,
+        "faceforensics.prob": 1.0,
     },
     "document_generic": {},
     "unclassified": {},
@@ -197,7 +212,7 @@ _EXPECTED_PROB_DET: dict[str, int] = {
 #   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
 #                (not speech) -> near-identity until a real-clean corpus lands.
 _CALIBRATE: dict[str, tuple[float, float]] = {
-    "effort.prob": (1.0, -0.45),
+    "effort.prob": (1.0, -0.55),
     "frameheur.prob": (1.97, 0.05),
     "havic.prob_inconsistent": (0.2, 0.0),
     "aasist.prob": (1.0, 0.0),
@@ -244,16 +259,18 @@ def _deepfake_pattern(target: str, signals: dict[str, float],
         havic_live = "havic.prob_inconsistent" not in gaps
         if (avr or 0) >= 0.45 and (hav is None or hav > 0.15) and havic_live:
             return ("fully_generated", 1.25, True)
-        # face_swap_partial (recalibrated): effort calibrated >0.50 with AV OK.
-        # On the -0.45 scale, raw effort >=0.95 hits this — near-ceiling face
-        # forensics on an audio-consistent clip = localized manipulation class.
-        if (eff or 0) > 0.50 and (avr or 0) < 0.30:
+        # face_swap_partial (recalibrated 2026-08-26): effort calibrated >0.40 with AV OK.
+        # On the -0.55 scale, raw effort >=0.95 hits this (0.40) — face forensics
+        # near-ceiling on an audio-consistent clip = localized manipulation class.
+        # (threshold moved 0.50->0.40 with the effort affine b -0.45->-0.55; the
+        # old >0.50 was unreachable because max calibrated effort = 1.0-0.55=0.45.)
+        if (eff or 0) > 0.40 and (avr or 0) < 0.30:
             return ("face_swap_partial", 1.05, True)
         if len(strong) >= 2:
             return ("corroborated_multi", 1.25, True)
         if len(elevated) >= 2:
             return ("corroborated_multi", 1.1, True)
-        if (eff or 0) > 0.50 or (avr or 0) >= 0.45:
+        if (eff or 0) > 0.40 or (avr or 0) >= 0.45:
             return ("weak_signal_single", 1.0, True)
         return ("generic", 1.0, False)
 
@@ -503,6 +520,16 @@ class FusionEngine:
             genuine_missing = [m for m in missing if m not in set(known_gaps)]
             verdict = Verdict.TRUST if not genuine_missing else Verdict.UNABLE_TO_VERIFY
         else:
+            verdict = Verdict.CAUTION
+
+        # 2026-08-26 NOT-BINARY-GATE (operator directive + measured evidence):
+        # image_facecheck verdicts CAP at CAUTION. SPAI feeds faceforensics as
+        # EVIDENCE, but a single learned-model read must not flip a photo to
+        # DO_NOT_USE — chameleon's false-HIGH overfit was exactly that. freqband
+        # is measured dead-noise (real 0.463 vs AI 0.399, overlapping) so no
+        # second independent signal corroborates an image fake yet; until one
+        # exists, DNU for images is a known-unreliable overclaim and is blocked.
+        if target == "image_facecheck" and verdict is Verdict.DO_NOT_USE:
             verdict = Verdict.CAUTION
 
         # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
