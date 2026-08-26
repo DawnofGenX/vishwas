@@ -152,7 +152,17 @@ class CrossModalCapability:
                             {"av_correlation": round(float(r), 3),
                              "best_lag_ms": lag_ms,
                              "alignment_class": verdict_class,
-                             "av_risk_addition": risk_add},
+                             "av_risk_addition": risk_add,
+                             # CLEAN-SIDE EVIDENCE (2026-08-26): = av_correlation
+                             # ONLY when independently classed "synced" (real
+                             # lip-sync), else 0.0. The deepfake_video fusion
+                             # weighs this NEGATIVELY to pull genuinely-synced
+                             # real videos to TRUST/LOW. Never fires on
+                             # decorrelated/anti-correlated/weakly-synced
+                             # (those stay 0.0 and can't be gamed). A deepfake
+                             # with unconvincing sync gets no clean bonus.
+                             "av_synced_clean": round(float(r), 3)
+                                              if verdict_class == "synced" else 0.0},
                             notes_map[verdict_class])]
         # Gated HAVIC learned model (refines the heuristic band). _havic_check
         # never raises: unavailable / ok / failed are all CheckResult-shaped.

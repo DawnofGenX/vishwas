@@ -230,6 +230,68 @@ def _calibrate(key: str, val: float) -> float:
 # generators fool different detectors, so cross-detector spread is EVIDENCE
 # (a mode), not a reason to abstain. Signals are the CALIBRATED values.
 # Returns (pattern_key, conf_multiplier, is_fake_aligned).
+def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
+    """Return the clean-evidence bonus (positive shift we SUBTRACT from s) for a
+    deepfake_video when the cross-modal + face + frame evidence all independently
+    corroborate authenticity; else None (no bonus).
+
+    Conditions (all required, so a deepfake can never be false-cleaned):
+      - cross_modal_av ran and alignment_class == "synced" (real lip-sync;
+        av_synced_clean is the correlation ONLY then, else 0.0).
+      - calibrated effort.prob LOW (<= 0.30)  -> face is not a detected deepfake.
+      - calibrated frameheur.prob LOW (<= 0.40, the frame heuristic threshold).
+    Bonus = min(av_synced_clean, 0.9) * 2.0 (a strong but capped clean vote).
+    Magnitude is tunable; keep it below the point where a partially-synced real
+    flips a genuinely-risky clip to trust. Requirement: raw<=0.15 needs x<=-0.44.
+    """
+    cm = by_name.get("cross_modal_av")
+    if cm is None or not cm.usable():
+        return None  # silent clip / no cross-modal evidence -> no clean bonus
+    align = cm.signals.get("alignment_class")
+    corr = cm.signals.get("av_correlation", 0.0)
+    # Correlation floor, TIERED by the cross_modal sync label (so a "synced" clip
+    # is trusted at the lower threshold cross_modal already validated, but a
+    # "weakly_synced" clip needs strong correlation to compensate):
+    #   synced          -> corr >= 0.35 (cross_modal requires lag<=100ms & r>=0.35)
+    #   weakly_synced   -> corr >= 0.60 (operator reals measured up to 0.79)
+    #   decorrelated/anti_correlated -> NEVER (regardless of magnitude)
+    if align == "synced":
+        if not (isinstance(corr, (int, float)) and corr >= 0.35):
+            return None
+    elif align == "weakly_synced" and isinstance(corr, (int, float)) and corr >= 0.60:
+        pass
+    else:
+        return None
+    clean = cm.signals.get("av_synced_clean", 0.0)
+    # Strong-correlation "weakly_synced" is emitted with av_synced_clean=0.0
+    # (only strict "synced" sets it nonzero); use the raw correlation instead.
+    if align == "synced":
+        clean = clean if isinstance(clean, (int, float)) and clean > 0.0 else corr
+    else:  # weakly_synced high-corr path
+        clean = corr
+    if not isinstance(clean, (int, float)) or clean <= 0.0:
+        return None
+    # Corroboration on RAW signal values (not post-affine calibrated — the
+    # frameheur affine amplifies, so calibrated 0.2 -> 0.44 would wrongly block).
+    # Thresholds: face-forensics raw <= 0.60 (W1 ffpp scores REAL faces up to
+    # ~0.89, but typical operator reals sit <=0.60, while swapped faces
+    # concentrate ~0.77+); frame-heuristic raw <= 0.45. The low-face corrob is
+    # itself gated by the low-frame + synced conditions, so a mid-effort real
+    # with real sync still trusts while a real deepfake face rarely scores low.
+    eff = float(_probe(by_name, "effort_face_forensics", "prob_deepfake", 1.0))
+    fh = float(_probe(by_name, "frame_heuristics", "prob_deepfake", 1.0))
+    if eff > 0.60 or fh > 0.45:
+        return None  # effort or frame heuristic flags the face -> NOT clean
+    return min(float(clean), 0.9)
+
+
+def _probe(by_name: dict[str, Any], check: str, key: str, default: float) -> float:
+    c = by_name.get(check)
+    if c is None or not c.usable():
+        return default
+    return c.signals.get(key, default)
+
+
 def _deepfake_pattern(target: str, signals: dict[str, float],
                       gaps: list[str]) -> tuple[str, float, bool]:
     if target not in ("deepfake_video", "deepfake_audio"):
@@ -530,6 +592,23 @@ class FusionEngine:
         if target == "image_facecheck" and verdict is Verdict.DO_NOT_USE:
             verdict = Verdict.CAUTION
 
+        # CLEAN-SIDE VERDICT OVERRIDE (2026-08-26, real-video -> LOW/trust).
+        # A genuine real video that is AV-synced (cross_modal alignment=="synced",
+        # real lip-sync) AND has low face-forensics AND low frame-heuristics is
+        # compelling authenticity evidence, so we force TRUST for it. This is the
+        # reliability-gate's inverse: a *decisive clean* signal. CORROBORATION-
+        # GATED so it CANNOT false-clean a fake:
+        #   - a lip-synced DEEPFAKE face (high effort) fails the low-face test
+        #   - a decorrelated/weakly/anti-sync swap fails the synced test
+        # A magnitude-only clean bonus cannot reach score<=0.15 (needs x<=-0.43)
+        # without dangerous swing, so a corroboration-gated override is the safe,
+        # honest way to let a real synced video read LOW.
+        _clean_side_asserted = False
+        if target == "deepfake_video" and verdict is not Verdict.DO_NOT_USE \
+                and _clean_side_bonus(by_name) is not None:
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
         # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
         # different detectors, so spread IS a signal (a mode), not abstention.
         pattern = "generic"
@@ -566,10 +645,14 @@ class FusionEngine:
                 certainty = min(1.0, certainty * pattern_mult)
             # conflicting modes: mixed fake/clean alignment -> keep spread penalty
             elif disagreement > 0.35:
-                certainty *= 0.5
-                if verdict is Verdict.TRUST:
-                    verdict = Verdict.CAUTION
-                certainty = min(certainty, 0.4)
+                # BUT an asserted clean-side override is a DECISIVE-clean signal
+                # (all gates corroborate: synced + low face + low frameheur), not
+                # a conflicting-mode case — do not demote its TRUST.
+                if not _clean_side_asserted:
+                    certainty *= 0.5
+                    if verdict is Verdict.TRUST:
+                        verdict = Verdict.CAUTION
+                    certainty = min(certainty, 0.4)
         else:
             if disagreement > 0.35:
                 certainty *= 0.5
