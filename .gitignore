@@ -6,6 +6,9 @@ __pycache__/
 *.egg-info/
 output/renders/
 
+# agent-local session runtime (plans moved to tracked docs/plans/)
+.hermes/
+
 # test fixtures are versioned; delegation notes stay ignored
 !.delegation/fixtures/
 

@@ -1,0 +1,57 @@
+{
+ "version": 1,
+ "target": "deepfake_audio",
+ "n_samples": 240,
+ "n_features": 10,
+ "folds": null,
+ "features": [
+  "f0",
+  "f1",
+  "f2",
+  "f3",
+  "f4",
+  "f5",
+  "f6",
+  "f7",
+  "f8",
+  "f9"
+ ],
+ "final": {
+  "w": [
+   0.0,
+   -0.0228739681229497,
+   -0.022788461009645336,
+   0.0,
+   0.2233807243073757,
+   0.0,
+   0.0,
+   -0.0228739681229497,
+   0.0,
+   0.0
+  ],
+  "b": -0.023461602696840042
+ },
+ "calibration": {
+  "t": 0.5,
+  "b": 0.0
+ },
+ "test_metrics": {
+  "accuracy": 0.5833333333333334,
+  "f1": 0.2857142857142857,
+  "roc_auc": 0.6336805555555556,
+  "pr_auc": 0.6472501256664868,
+  "ece": 0.06478027214758594,
+  "brier": 0.2480251050444023,
+  "fpr@0.5": 0.0,
+  "fnr@0.5": 0.8333333333333334,
+  "sel_coverage_yes": 0.0,
+  "sel_risk_yes": null,
+  "sel_coverage_no": 0.0,
+  "sel_risk_no": null,
+  "sel_abstain_frac": 1.0
+ },
+ "train_time_s": 0.019,
+ "note": "LR head trained on operator/synthetic labelled features; feature layout must match FusionEngine.feature_vector[target]",
+ "source": "jsonl:/home/hermes/fusion_audio/feat_vectors/rows_audio.jsonl",
+ "seed": 0
+}
