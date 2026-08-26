@@ -40,6 +40,10 @@ _CONCERN_RULES: list[tuple[str, str, float, str]] = [
     ("effort_face_forensics", "prob_deepfake", 0.5, "concern_video_face"),
     ("frame_heuristics", "prob_deepfake", 0.5, "concern_video_face"),
     ("cross_modal_av", "prob_inconsistent", 0.5, "concern_av_sync"),
+    # IMAGE: the offline frequency-band heuristic (and SPAI heavy when wired)
+    # carry prob_deepfake for still images; surface the same face/synthetic concern.
+    ("frequency_band_analysis", "prob_deepfake", 0.5, "concern_video_face"),
+    ("image_face_forensics", "prob_deepfake", 0.5, "concern_video_face"),
     ("vt_url_reputation", "positives_ratio", 0.05, "concern_url_flag"),
     ("phish_heuristics", "host_string_score", 0.5, "concern_url_typo"),
     ("gov_document", "prob_forged", 0.5, "concern_doc_forged"),
@@ -131,7 +135,7 @@ class ReportBuilder:
         if verdict in (Verdict.CAUTION, Verdict.DO_NOT_USE):
             label, risk, emoji = _VERDICT_TILE[verdict]
             tile = t("verdict_tile", lang, label=label,
-                     risk=risk.lower(), emoji=emoji)
+                     risk=risk.upper(), emoji=emoji)
             parts.append(tile)
             concerns = concerns_for(checks, target, verdict, lang, _keys=False)
             if concerns:

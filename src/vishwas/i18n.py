@@ -189,7 +189,7 @@ _DEFAULTS: dict[str, dict[str, str]] = {
     # UX 2026-08-26: richer narrative reply. en-only for now; other langs fall
     # back to en via t() (no native-review gate — translate when a reviewer lands).
     "verdict_tile": {
-        "en": "%(emoji)s %(label)s · %(risk)s Risk",
+        "en": "%(emoji)s %(label)s · %(risk)s RISK",
         "hi": "%(emoji)s %(label)s · %(risk)s जोखिम",
     },
     "concern_count": {

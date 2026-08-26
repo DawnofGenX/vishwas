@@ -126,3 +126,13 @@ def test_build_renders_localized_bullets_not_keys():
     assert "the voice shows signs of AI manipulation" in text  # localized bullet
     assert "concern_audio_ai" not in text  # no raw key leaked
     assert "Don't forward. Verify with a trusted source." in text
+
+
+def test_tile_risk_all_caps_matches_risk_line():
+    from vishwas.report import ReportBuilder
+    rb = ReportBuilder()
+    r = rb.build(target="deepfake_video", verdict=Verdict.DO_NOT_USE, confidence=0.8,
+                 reasons=[], checks=[], lang="en")
+    text = str(r)
+    assert "LIKELY FAKE · HIGH RISK" in text  # all-caps risk matches RISK LEVEL styling
+    assert "High Risk" not in text and "high Risk" not in text
