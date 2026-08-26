@@ -1,5 +1,10 @@
 # QR Verification Scouting — 2026-08-22
 
+> **NOTE (2026-08-26):** the DigiLocker/UDYAM URL-QR findings in this scouting
+> record below were **REMOVED** from the shipped `classifier.py` (the
+> `digilocker_url` subtype was retired); the Aadhaar/EPIC/PAN offline paths
+> descibed here are unchanged and remain wired.
+
 This document records the completed technology scouting that feeds the `qr_verify` implementation (`src/vishwas/qr_verify/`) — the offline QR-based verification feature for Indian government IDs on Vishwas's zero-retention WhatsApp fraud-check platform. Every claim below was researched and empirically validated on 2026-08-22 (decoder bake-off run locally on py3.12 / cv2 5.0.0); the **Adoption decisions** subsection states what the implementation actually builds on, and the body preserves the full evidence, tables, links, and caveats behind those choices.
 
 ## Adoption decisions

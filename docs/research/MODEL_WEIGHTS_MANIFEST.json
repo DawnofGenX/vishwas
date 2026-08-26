@@ -1,6 +1,20 @@
 {
   "generated_utc": "2026-08-19T00:00:00Z",
   "source": "salvaged live probes deleg_52df5e95 task-0",
+  "removed_gates": [
+    {
+      "gate": "digilocker",
+      "status": "REMOVED",
+      "removed_utc": "2026-08-26",
+      "notes": "external DigiLocker API integration deleted from gov_document (registration/partnership-gated, unimplementable); no weights were ever provisioned; local QR/signature/official-web verify retained"
+    },
+    {
+      "gate": "apisetu",
+      "status": "REMOVED",
+      "removed_utc": "2026-08-26",
+      "notes": "external API-Setu integration deleted from gov_document + api-setu catalog digest removed from rag_cache (consumer registration-gated, unimplementable)"
+    }
+  ],
   "gates": [
     {
       "gate": "effort",

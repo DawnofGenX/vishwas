@@ -35,7 +35,7 @@ _URL_IN_TEXT_RE = re.compile(
 _GOV_HINTS = re.compile(
     r"(?i)\b(aadhaar|pan\b|voter\s*(id|card)|pass(port|book)|driv?er'?s?\s*licen[sc]e"
     r"|election\s*commiss|epfo|esic|pension|ayushman|rashan|ration\s*card"
-    r"|digilocker|land\s*record[s]?|khata\s*copy|encumbrance\s*certif"
+    r"|land\s*record[s]?|khata\s*copy|encumbrance\s*certif"
     r"|income\s*certificate|caste\s*certificate|birth\s*certificate"
     r"|marriage\s*certificate|degree\s*verific|salary\s*slip|pay\s*slip"
     r"|bank\s*statement|nsdl|nsdl\.in|passport\.gov\.in|indiabillboard)"

@@ -2,6 +2,12 @@
 
 *Hermes Agent (ox-alpha) for DawnofGenX — 2026-08-22*
 
+> **NOTE (2026-08-26):** the `digilocker_url` subtype this design describes
+> was subsequently **REMOVED** from `classifier.py` (the external
+> DigiLocker/UDYAM deep-link channel no longer exists as a classification);
+> such URLs now classify as `unknown`. The aadhaar_secure / epic_b64 /
+> pan_text subtypes are unchanged.
+
 Feeds the `src/vishwas/qr_verify/` implementation. Scouting evidence and
 source links: `docs/research/QR_VERIFY_SCOUTING_2026-08-22.md`.
 

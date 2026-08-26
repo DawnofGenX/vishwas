@@ -88,7 +88,7 @@ in aspiration.
 |---|---|---|---|
 | `url_phishing.py` | `url_phishing` | Normalise → SSRF → (VT reputation) → host-string typosquat/phish scorer (always computable) → DOM kit (forms/password/external-post/brand-match) → PhishLLM if available → download files re-enter file pipeline | VT, browser, PhishLLM, LLM |
 | `malware_file.py` | `malicious_file` | APK: VT → MobSF → JADX/APKTool → Quark-Engine → YARA-X; PE/ELF: static imports/heuristics → YARA-X → CAPE (dynamic) when present | clamav, yara, mobsf/jadx, dynamic-sandbox |
-| `gov_document.py` | `gov_document` | Docling/tesseract OCR → doc-type + authority detection → DigiLocker / digital-sig / QR / API Setu / official-API verification → Playwright-on-official-site fallback → versioned RAG cache (retrieval only, **not** source of truth) | ocr, docling, browser, gov APIs |
+| `gov_document.py` | `gov_document` | Docling/tesseract OCR → doc-type + authority detection → digital-signature / QR-native / official-site verification (external DigiLocker/API-Setu API channels removed 2026-08-26) → versioned RAG cache (retrieval only, **not** source of truth) | ocr, docling, browser |
 | `deepfake_video.py` | `deepfake_video` | ffprobe → frames → Effort (spatial) + VB+StA (temporal) + DeMamba (general/degraded) heavy detactors **when weights present**; offline heuristic baseline otherwise; robustness-transform battery | model-weights, cv2, ffmpeg |
 | `deepfake_audio.py` | `deepfake_audio` | Probe → offline spectral/MFCC baseline with **near-silence abstention gate** → Fake-Mamba / AASIST / SSL detector (multi-crop) when weights present | model-weights, ffmpeg |
 | `cross_modal.py` | companion to video-with-audio | HAVIC-class AV-consistency forensics (lip/audio timing, energy correlation) | weights |

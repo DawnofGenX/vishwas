@@ -153,16 +153,6 @@ def test_pan_legacy_text_classification_and_extraction():
     assert res.signals["dob_found"] is True
 
 
-def test_digilocker_url_classification_only():
-    url = "https://www.digilocker.gov.in/verify?id=UDYAM-XX-00-0012345"
-    assert classify_payload(url) == "digilocker_url"
-    res = verify_payload(url)
-    assert res.kind == "digilocker_url"
-    assert res.status == "degraded"  # honest: content needs network
-    assert "digilocker" in res.signals["host"]
-    assert res.detail
-
-
 def test_unknown_payload_honest_unavailable():
     payload = "random whatsapp note about tomorrow's weather, 42C likely"
     assert classify_payload(payload) == "unknown"

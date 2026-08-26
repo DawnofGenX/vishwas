@@ -72,14 +72,13 @@ def _ctx(art: Artifact, tmp_path) -> JobContext:
 def _hermetic(monkeypatch, tmp_path):
     """Text-less fast path + empty RAG cache + no network-capable gates.
 
-    analyze() still runs its REAL digital-signature / qnative / digilocker /
-    api-setu / official-web / rag stages — all of which degrade to skipped or
-    indicator-only records for a text-less PNG, keeping this end-to-end honest.
+    analyze() still runs its REAL digital-signature / qnative / official-web /
+    rag stages — all of which degrade to skipped or indicator-only records for
+    a text-less PNG, keeping this end-to-end honest.
     """
     monkeypatch.setattr(gd, "_extract_text", lambda art, ctx: ("", "none"))
     monkeypatch.setenv("VISHWAS_RAG_CACHE", str(tmp_path / "rag-cache"))
-    for var in ("VISHWAS_DOCLING", "VISHWAS_DIGILOCKER_KEY",
-                "VISHWAS_APISETU_TOKEN", "VISHWAS_QR_EXTRA_TRUST_PATHS"):
+    for var in ("VISHWAS_DOCLING", "VISHWAS_QR_EXTRA_TRUST_PATHS"):
         monkeypatch.delenv(var, raising=False)
 
 

@@ -23,7 +23,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from . import aadhaar_secure, decoder, epic, pan_legacy
 from .classifier import classify_payload
@@ -69,16 +68,6 @@ def _scrub_uid_runs(obj: Any) -> tuple[Any, bool]:
     return obj, False
 
 
-def _verify_digilocker(payload: str) -> tuple[str, dict, str]:
-    parts = urlparse(payload.strip())
-    host = (parts.netloc or "").lower()
-    return ("degraded",
-            {"scheme": parts.scheme, "host": host},
-            "DigiLocker/UDYAM verification URL recognised; the linked document "
-            "sits behind network access, so offline verification stops at "
-            "classification")
-
-
 def verify_payload(payload: str, *, extra_trust_paths: Any = None) -> QrVerifyResult:
     """Classify + verify one decoded QR payload. Never raises.
 
@@ -100,8 +89,6 @@ def verify_payload(payload: str, *, extra_trust_paths: Any = None) -> QrVerifyRe
             status, signals, detail = aadhaar_secure.verify(payload, extras)
         elif kind == "epic_b64":
             status, signals, detail = epic.verify(payload, extras)
-        elif kind == "digilocker_url":
-            status, signals, detail = _verify_digilocker(payload)
         elif kind == "pan_text":
             status, signals, detail = pan_legacy.verify(payload, extras)
         else:

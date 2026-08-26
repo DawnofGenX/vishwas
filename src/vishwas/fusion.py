@@ -76,8 +76,6 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "download.ext_mismatch": 1.0,
     },
     "gov_document": {
-        "digilocker.verified": -5.0,
-        "apisetu.records_found": -1.0,
         "signature.valid": -4.0,
         "sig_object.present": -1.5,
         "qr.sha1_match": -3.0,
@@ -165,8 +163,6 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
     "ssrf.blocked": ("ssrf_guard", "blocked", KIND_DEFAULT_NUM, False),
     "download.ext_mismatch": ("url_download_revalidated", "ext_mismatch", KIND_DEFAULT_NUM, False),
     # --- gov_document ---
-    "digilocker.verified": ("digilocker_verify", "dl_verified", KIND_NEG_BOOL, False),
-    "apisetu.records_found": ("api_setu_lookup", "records_found", KIND_INT_FRAC, False),
     "signature.valid": ("digital_signature", "valid", KIND_NEG_BOOL, False),
     "sig_object.present": ("digital_signature", "has_sig_object", KIND_NEG_BOOL, False),
     "qr.sha1_match": ("qr_native_check", "sha1_matches_declaration", KIND_NEG_BOOL, False),
@@ -686,8 +682,9 @@ class ReliabilityGate:
       - media-quality flag set false by a capability
       - distribution-shift index beyond tolerance (transform battery unstable)
       - too many known-gated tools for the domain to have any coverage left
-      - explicit evidence conflicts (signature valid vs authoritative negative;
-        authoritative positive vs QR/hash mismatch)
+    (The external-authoritative conflict rules were RETIRED 2026-08-26
+    together with the removed external-API integration — there is no
+    authoritative negative/positive anchor to conflict-check against anymore.)
     """
 
     def __init__(self, max_disagreement: float = 0.5,
@@ -728,43 +725,6 @@ class ReliabilityGate:
             ok = False
             notes.append(f"distribution_shift={ds:.2f}")
 
-        # conflict rules on the named checks
-        sig_valid = _sig(usable, "digital_signature", "valid")
-        sig_object = _sig(usable, "digital_signature", "has_sig_object")
-        dl = by_name_state(usable, "digilocker_verify", "dl_verified")
-        qr_ok = _sig(usable, "qr_native_check", "sha1_matches_declaration")
-        upi_bad = _sig(usable, "financial_field_validation", "invalid_upis")
-
-        if (sig_valid or (sig_object is True)) and (dl is False):
-            ok = False
-            notes.append("conflict: signature/object indicator vs DigiLookup negative")
-
-        if dl is True and (qr_ok is False):
-            ok = False
-            notes.append("conflict: authoritative verify vs embedded-hash mismatch")
-        if dl is False and upi_bad is True:
-            ok = False
-            notes.append("conflict: payment-instruction tamper indicators with failed authoritative check")
         if not ok and fused.verdict is Verdict.TRUST:
             notes.insert(0, "suppressed TRUST verdict")
         return ok, notes
-
-
-def _sig(checks, name: str, key: str):
-    """Signal value of the first *usable* check with given name/key, else None."""
-    for c in checks:
-        if c.name == name and c.usable():
-            v = c.signals.get(key)
-            return v
-    return None
-
-
-def by_name_state(checks, name: str, key: str):
-    """Signal value of the first check with given name (any status), else None.
-
-    Used for conflict detection where a DEGRADED/negative authoritative result
-    still counts as evidence (unlike _sig which ignores non-usable checks)."""
-    for c in checks:
-        if c.name == name:
-            return c.signals.get(key)
-    return None

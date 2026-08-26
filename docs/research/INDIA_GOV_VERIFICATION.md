@@ -1,10 +1,17 @@
 # Indian Government Document-Verification Infrastructure — Research Snapshot
 
+> **STATUS (2026-08-26):** the external DigiLocker + API-Setu API integrations
+> described below were **REMOVED** from `gov_document` — both are
+> registration/partnership-gated and unimplementable without operator
+> credentials. This doc is retained as historical research. The on-disk
+> `data/apisetu_catalog_digest_2026-08-19.json` evidence file was deleted in
+> that removal; the local digital-signature / QR / official-web verification
+> path is independent and unchanged.
+
 **Captured:** 2026-08-19 (live probes from this machine; every claim below re-verified against primary sources)
 **Provenance:** salvage + independent re-verification of delegation `deleg_7306c63c` (timed out at 50 iterations / Cloudflare 524 before writing its summary). Host DNS claims confirmed via Google DoH; API behavior replayed live; Docling facts pulled from PyPI/GitHub APIs.
 **Evidence files:**
-- `data/apisetu_catalog_digest_2026-08-19.json` — 461 KB digest of API Setu `/api/list` responses for aadhaar/pan/voter id/udyam/passport/income certificate/epf/ration (orgs, issuerIds, endpoints, per-API samples)
-- `/tmp/apisetu_catalog.json` (transient) — raw page-0 of the empty-query catalog dump (Meilisearch shape)
+- *(the API-Setu catalog digest `data/apisetu_catalog_digest_2026-08-19.json` was deleted with the integration removal — see banner above)*
 
 ---
 

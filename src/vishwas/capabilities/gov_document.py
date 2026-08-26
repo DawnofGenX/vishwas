@@ -8,11 +8,14 @@ Progressive & spec-compliant:
      EPF, Bank Passbook, Income Tax notices, Ration Card, NREGA/PM-KISAN letters).
   3. AUTHORITATIVE checks, in priority order:
        a. Digital signature / QR-native verification  (PGP/gpg, PDF signer)
-       b. DigiLocker API           (key-gated; official UIDAI ecosystem)
-       c. QR payload verification  (parse & validate structure per doc type)
-       d. API Setu                 (key-gated; govt-API aggregator)
-       e. Official website lookups via controlled Playwright (gated) / urllib
+       b. QR payload verification  (parse & validate structure per doc type)
+       c. Official website lookups via controlled Playwright (gated) / urllib
           SSRF-guarded fallback, only against allowlisted official domains.
+
+     (The external DigiLocker + API-Setu API channels were RETIRED 2026-08-26:
+      they were unimplementable without operator registration. The local
+      QR-native / signature / official-web verification above is independent
+      and unchanged.)
   4. Versioned verified-RAG database = RETRIEVAL CACHE ONLY (never source of
      truth): stores previously-verified template shapes / number formats so
      repeated verifications are fast; every match is still backed by live
@@ -353,8 +356,6 @@ class GovDocumentCapability:
         out.extend(self._digital_signature(art, ctx))
         out.extend(self._qnative_checks(art, text, ctx, doc_type))
         out.extend(self._qr_payload_checks(art))
-        out.extend(self._digilocker(art, text, ctx))
-        out.extend(self._api_setu(text, ctx))
         out.extend(self._official_web_check(ctx, doc_type, auth))
         out.extend(self._rag_cache(text, ctx, doc_type, auth))
         return out
@@ -547,7 +548,7 @@ class GovDocumentCapability:
                 out.append(CheckResult("qr_native_check", "mid", "ok",
                                        {"ekyc_fields_present": sorted(ekyc.keys()),
                                         "sha1_matches_declaration": bool(ok_hash),
-                                        "aadhaar_masked": ekyc["masked_number"]},
+                                        "aadhaar_masked": ekyc["aadhaar_masked"]},
                                        "e-KYC structure validated; SHA1 "
                                        + ("matches embedded declaration" if ok_hash else "DOES NOT MATCH — possible tampering")))
                 return out
@@ -564,60 +565,6 @@ class GovDocumentCapability:
                                     "ifsc_codes": sorted(set(ifcs_ok))},
                                    "found UPI/IFSC references; invalid ones often indicate tampered payment instructions"))
         return out
-
-    def _digilocker(self, art: Artifact, text: str, ctx: JobContext) -> list[CheckResult]:
-        key = os.environ.get("VISHWAS_DIGILOCKER_KEY")
-        if not key:
-            return [CheckResult("digilocker_verify", "mid", "unavailable", {},
-                                "DigiLocker credential not provisioned; skip authoritative DigiLookup")]
-        url = os.environ.get("VISHWAS_DIGILOCKER_URL", "https://apis.digilocker.gov.in/dl/v1/verDoc")
-        payload = {"dl_docid": _find_docid(text)}
-        if not payload["dl_docid"]:
-            return [CheckResult("digilocker_verify", "mid", "skipped", {},
-                                "no DigiLocker document id present in the document text")]
-        import urllib.request
-        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json",
-                                              "x-api-key": key})
-        try:
-            with urllib.request.urlopen(req, timeout=25) as r:
-                data = json.loads(r.read().decode())
-            valid = bool(data.get("success") or data.get("status") in ("SUCCESS", "VERIFIED"))
-            notes = ("DigiLookup verified the document id against UIDAI records"
-                     if valid else "DigiLookup returned a NON-verification response")
-            return [CheckResult("digilocker_verify", "mid", "ok",
-                                {"dl_verified": bool(valid),
-                                 "dl_response_code": str(data.get("statusCode") or data.get("status"))},
-                                notes)]
-        except Exception as e:  # noqa: BLE001
-            return [CheckResult("digilocker_verify", "mid", "failed",
-                                {"error_class": e.__class__.__name__},
-                                "DigiLookup call failed; other evidence still counts")]
-
-    def _api_setu(self, text: str, ctx: JobContext) -> list[CheckResult]:
-        key = os.environ.get("VISHWAS_APISETU_TOKEN")
-        if not key:
-            return [CheckResult("api_setu_lookup", "heavy", "unavailable", {},
-                                "API Setu token not provisioned; official-API aggregation skipped")]
-        import urllib.request
-        base = os.environ.get("VISHWAS_APISETU_BASE", "https://apisetu.gov.in/api/v1")
-        # find which service could answer based on detected doc type
-        endpoint_map = {"pan_card": "/pan/status", "epf_statement": "/epf/membership"}
-        ep = endpoint_map.get(_dt_of(text) or "", None)
-        if not ep:
-            return [CheckResult("api_setu_lookup", "heavy", "skipped", {},
-                                "no applicable official API for this document class in current catalog")]
-        req = urllib.request.Request(base + ep, headers={"Authorization": f"Bearer {key}"})
-        try:
-            with urllib.request.urlopen(req, timeout=25) as r:
-                data = json.loads(r.read().decode())
-            return [CheckResult("api_setu_lookup", "heavy", "ok",
-                                {"matched_service": ep, "records_found": len(data.get("data", [])) if isinstance(data, dict) else "?"},
-                                f"official {ep} service answered")]
-        except Exception as e:  # noqa: BLE001
-            return [CheckResult("api_setu_lookup", "heavy", "failed",
-                                {"error_class": e.__class__.__name__, "endpoint": ep},
-                                "API Setu call failed")]
 
     def _official_web_check(self, ctx: JobContext, doc_type: str | None, auth: str | None) -> list[CheckResult]:
         """Controlled access to official sites: Playwright first (gated), else
@@ -703,11 +650,6 @@ class GovDocumentCapability:
 
 # ------------------------------------------------------------ helpers ----
 
-def _find_docid(text: str) -> str | None:
-    m = re.search(r"dl[-_]?docid[\"']?\s*[:=]?\s*[\"']?([0-9A-Za\-]{8,})", text, re.I)
-    return m.group(1) if m else None
-
-
 def _vpa_sane(v: str) -> bool:
     local, _, dom = v.partition("@")
     return 2 <= len(local) <= 15 and 2 <= len(dom) <= 15 and local.count(".") <= 1
@@ -751,11 +693,6 @@ def _parse_ekyc(text: str) -> dict | None:
 def _try_sha1(b: bytes) -> str | None:
     import hashlib
     return hashlib.sha1(b).hexdigest()
-
-
-def _dt_of(text: str) -> str | None:
-    t, _, _, _ = identify_document(text)
-    return t
 
 
 def _pick_official_domain(dt: str | None, auth: str | None) -> str | None:

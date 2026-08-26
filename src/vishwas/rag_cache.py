@@ -12,20 +12,19 @@ confidence, never block. Callers treat a stale/absent cache as "no signal",
 not as a failure.
 
 Cache-level freshness gate (``cache_freshness`` / ``cache_stale``): the whole
-index is stale when its ``built_utc`` is missing/unparseable, older than
-``CACHE_TTL_DAYS`` (14), or its recorded ``source_digest`` sha256 does not
-match the latest ``apisetu_catalog_digest_*.json`` in the catalog dir
-(``VISHWAS_RAG_DIGEST_DIR``, default ``<repo>/docs/research/data``).
-Honest defaults, fail-closed: a cache with NO build timestamp is stale (we
-cannot claim freshness we cannot see); a cache with NO recorded source digest
-is likewise stale (pre-gate caches must be rebuilt once to gain provenance).
-Staleness degrades — consumers drop their confidence contribution silently,
-exactly like an absent cache; it is never an error surface.
+index is stale when its ``built_utc`` is missing/unparseable or older than
+``CACHE_TTL_DAYS`` (14). Logically this gate also scored provenance by
+comparing a recorded source digest against an external catalog file, but that
+external API-Setu catalog feature was RETIRED 2026-08-26 together with the
+removed external-API integration — a freshness claim is now proven purely by
+the build timestamp and TTL. Honest defaults, fail-closed: a cache with NO
+build timestamp is stale (we cannot claim freshness we cannot see). Staleness
+degrades — consumers drop their confidence contribution silently, exactly
+like an absent cache; it is never an error surface.
 """
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,7 +32,6 @@ from pathlib import Path
 _FALLBACK_DIR = "/home/hermes/rag-cache"
 _FALLBACK_VERSION = "1"
 CACHE_TTL_DAYS = 14          # cache-level TTL for built_utc (Phase 2 task 2.4)
-_CATALOG_GLOB = "apisetu_catalog_digest_*.json"   # date-suffixed -> name-sorted = chronological
 
 
 def _cache_dir() -> Path:
@@ -105,68 +103,21 @@ def freshness(entry: dict, now: _dt.datetime | None = None,
 
 
 # ------------------------------------------------- cache-level freshness ----
-def _default_digest_dir() -> Path:
-    """Catalog dir: VISHWAS_RAG_DIGEST_DIR or <repo>/docs/research/data."""
-    env = os.environ.get("VISHWAS_RAG_DIGEST_DIR")
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parents[2] / "docs" / "research" / "data"
-
-
 def built_at(index: dict) -> _dt.datetime | None:
     """Parse the builder's ``built_utc``; None when missing/unparseable."""
     return _parse_utc(index.get("built_utc"))
 
 
-def source_digest_of(index: dict) -> str | None:
-    """sha256 the builder recorded for the catalog file it consumed."""
-    sd = index.get("source_digest")
-    if isinstance(sd, dict):
-        v = sd.get("sha256")
-        return str(v) if v else None
-    if isinstance(sd, str) and sd:
-        return sd
-    return None
-
-
-def latest_catalog(digest_dir: str | Path | None = None) -> Path | None:
-    """Newest ``apisetu_catalog_digest_*.json`` in the catalog dir, or None.
-
-    Filenames carry ISO dates, so lexicographic order == chronological.
-    """
-    d = Path(digest_dir) if digest_dir else _default_digest_dir()
-    try:
-        cands = sorted(d.glob(_CATALOG_GLOB))
-    except OSError:
-        return None
-    return cands[-1] if cands else None
-
-
-def file_sha256(path: str | Path) -> str | None:
-    """sha256 hex digest of a file; None when unreadable (never raises)."""
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return None
-
-
-def cache_freshness(index: dict, now: _dt.datetime | None = None,
-                    digest_dir: str | Path | None = None) -> tuple[bool, str]:
+def cache_freshness(index: dict, now: _dt.datetime | None = None) -> tuple[bool, str]:
     """Cache-level freshness gate. Returns ``(fresh, reason)``.
 
     Fresh only when ALL hold:
       * ``built_utc`` present and parseable  -> else ``missing-build-timestamp``
       * built within ``CACHE_TTL_DAYS`` (14) -> else ``ttl-expired``
-      * recorded ``source_digest`` sha256 equals the sha256 of the LATEST
-        catalog file in the digest dir       -> else ``missing-source-digest``
-        / ``catalog-unavailable`` / ``digest-mismatch``
 
-    Honest fail-closed defaults: no timestamp, or no recorded digest, means
-    stale — we never claim a freshness we cannot verify. Never raises.
+    Honest fail-closed default: no timestamp means stale — we never claim a
+    freshness we cannot verify. (The external catalog provenance leg of this
+    gate was RETIRED 2026-08-26 with the API-Setu integration.) Never raises.
     """
     built = built_at(index or {})
     if built is None:
@@ -175,22 +126,12 @@ def cache_freshness(index: dict, now: _dt.datetime | None = None,
         now = _dt.datetime.now(_dt.timezone.utc)
     if (now - built).total_seconds() > CACHE_TTL_DAYS * 86400.0:
         return False, "ttl-expired"
-    recorded = source_digest_of(index)
-    if not recorded:
-        return False, "missing-source-digest"
-    cat = latest_catalog(digest_dir)
-    if cat is None:
-        return False, "catalog-unavailable"
-    actual = file_sha256(cat)
-    if actual is None or actual != recorded:
-        return False, "digest-mismatch"
     return True, "ok"
 
 
-def cache_stale(index: dict, now: _dt.datetime | None = None,
-                digest_dir: str | Path | None = None) -> bool:
+def cache_stale(index: dict, now: _dt.datetime | None = None) -> bool:
     """True when the cache fails the freshness gate (see cache_freshness)."""
-    fresh, _ = cache_freshness(index, now=now, digest_dir=digest_dir)
+    fresh, _ = cache_freshness(index, now=now)
     return not fresh
 
 

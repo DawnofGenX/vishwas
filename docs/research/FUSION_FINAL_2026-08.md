@@ -59,7 +59,7 @@ Closes out `.hermes/plans/2026-08-25_215218-fusion-next-phase.md` Task 7. All P0
 - **URL**: production-ready (heuristics + SSRF guard; VT gated on key/quota; Finding E fallback now regression-tested).
 - **Video**: production-ready at documented operating point — full-AI video → DNU reliably; FF++-style face-swaps → CAUTION (EFFORT C23 inversion is a model limitation, not a wiring bug).
 - **Audio**: calibration-only. HABLA checkpoint degenerate (documented); Spectra-AASIST3 vendored but rejected on measured bar; XLSR separates but variance high. Scaling requires official ASV2019-LA eval reproof + 2021 labels.
-- **Gov documents**: QR verification live for photo'd IDs; DigitalLocker/SETU/GPG/RAG gated behind env vars as designed.
+- **Gov documents**: QR + signature verification live for photo'd IDs and signed PDFs; the external DigiLocker/SETU API channels and their env-gated wiring were **REMOVED 2026-08-26 (registration-gated, unimplementable)** — GPG/signature + QR + official-web/RAG verification remain and are unchanged.
 
 ## Deferred / rejected (do not reopen without new evidence)
 - Wiring any learned stack for deepfake_audio (bars failed twice; third candidate rejected on measured corpus).

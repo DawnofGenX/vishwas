@@ -140,15 +140,23 @@ def test_gate_blocks_excessive_disagreement(ctx):
     assert any(n.startswith("disagreement=") for n in notes)
 
 
-def test_gate_flags_authoritative_conflict(ctx):
-    """valid signature object but DigiLocker says NOT verified -> conflict."""
-    from vishwas.fusion import FusionDecision
-    fused = FusionDecision(verdict=Verdict.TRUST, score=0.2, raw=0.2, disagreement=0.0)
+def test_gov_document_signature_plus_qr_still_trusts(ctx):
+    """A genuine, well-evidenced gov doc STILL lands TRUST after the external
+    API-removal commit — the real negatives (signature.valid -4.0,
+    sig_object.present -1.5, qr.sha1_match -3.0) pull the risk score into the
+    TRUST band on their own. Regression guard for the pure-deletion change."""
     checks = [
-        cr("digital_signature", "ok", has_sig_object=True),
-        cr("digilocker_verify", "degraded", dl_verified=False),
+        cr("document_extraction", "ok", extractor="pypdf", chars=800, low_quality=0.0),
+        cr("digital_signature", "ok", has_sig_object=True, valid=True),
+        cr("qr_native_check", "ok", ekyc_fields_present=["Name"],
+           sha1_matches_declaration=True, aadhaar_masked="XXXX-1234"),
+        cr("financial_field_validation", "ok", upis_found=[], valid_upis=[],
+           invalid_upis=[], ifsc_codes=[]),
+        cr("rag_template_cache", "skipped", cache_version="1"),
     ]
-    ok, notes = ReliabilityGate().evaluate(fused, checks, ctx)
-    assert ok is False
-    assert any("conflict" in n for n in notes)
-    assert "suppressed TRUST verdict" in notes
+    d = FusionEngine().decide("gov_document", checks)
+    # every mapped signal present-or-gated, no genuine missing evidence
+    assert d.verdict is Verdict.TRUST, d.reasons
+    assert d.score <= 0.15, f"gov-doc risk score must stay in the TRUST band: {d.score}"
+    ok, notes = ReliabilityGate().evaluate(d, checks, ctx)
+    assert ok is True, notes

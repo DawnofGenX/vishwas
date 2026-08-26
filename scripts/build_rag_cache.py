@@ -7,7 +7,8 @@ Stdlib + urllib ONLY. Honors:
 
 Deterministic content (always written, no network):
   * document_templates  - derived from gov_document.DOC_TYPE_LEXICON (derived=true)
-  * issuer_trust        - from the dated API Setu catalog digest (class b)
+  * issuer_trust        - (depopulated 2026-08-26: sole source was the retired
+                           API-Setu catalog digest, removed with that integration)
   * qr_schemes          - transcribed VERBATIM from .delegation/sec4_qr.txt
   * bookkeeping         - budget / wall-clock / unreachable sources
 
@@ -25,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import hashlib
 import json
 import os
 import random
@@ -37,7 +37,6 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DIGEST = ROOT / "docs" / "research" / "data" / "apisetu_catalog_digest_2026-08-19.json"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 BUDGET = 6
@@ -105,48 +104,11 @@ QR_SCHEMES = [
     {"scheme": "PAN (NSDL/UTI)",
      "description": "modern PAN cards carry a QR with PAN + name.",
      "classification_regex": "^[A-Z]{5}\\d{4}[A-Z]$"},
-    {"scheme": "DigiLocker certificates & UDYAM",
-     "description": "QR = deep link to the issuing portal's verify page "
-                    "(URL, not JSON) - this is the user-assisted verification vector.",
-     "classification_regex": None},
     {"scheme": "IndiaStack e-KYC responses",
      "description": "signed JSON with base64-encoded PDF/A image; the QR on "
                     "physical copies typically points to the issuer's verification endpoint.",
      "classification_regex": None},
 ]
-
-
-def _sha256_file(path: Path) -> str:
-    """sha256 hex of the catalog file -> recorded in the index as provenance."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def load_issuer_trust(digest_path: Path) -> tuple[dict, str]:
-    """Class (b): dedupe issuers across all queries by issuerId."""
-    d = json.loads(digest_path.read_text())
-    snap = d.get("captured_utc", "")
-    seen: dict[str, dict] = {}
-    order: list[str] = []
-    for q in d.get("queries", {}).values():
-        for e in q.get("entries", []):
-            iid = e.get("issuerId")
-            if not iid or iid in seen:
-                continue
-            seen[iid] = {
-                "orgName": e.get("org"),
-                "issuerId": iid,
-                "orgType": e.get("type"),
-                "orgState": e.get("orgState"),
-                "subdomainName": e.get("subdomain"),
-                "apis_sample": (e.get("apis_sample") or [])[:5],
-                "snapshot_utc": snap,
-            }
-            order.append(iid)
-    return {k: seen[k] for k in order}, snap
 
 
 # ------------------------------------------------------------- live refresh --
@@ -258,23 +220,19 @@ def live_refresh(index: dict, budget: int = BUDGET) -> dict:
 def build(cache_dir: Path, version: str, do_network: bool) -> dict:
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / "blobs").mkdir(exist_ok=True)
-    issuers, snap = load_issuer_trust(DIGEST)
     index = {
         "schema_version": 1,
         "version": version,
         "built_utc": _now(),
         "staleness_days": STALENESS_DAYS,
-        # Provenance for the reader's freshness gate (rag_cache.cache_freshness):
-        # sha256 of the catalog file this build consumed; the reader recomputes
-        # it against the LATEST catalog file and marks the cache stale on drift.
-        "source_digest": {"file": DIGEST.name, "sha256": _sha256_file(DIGEST)},
         "entries": {
             "document_templates": {
                 k: {"sha256": None, "source_url": None, "fetched_utc": None,
                     "content_type": None, "field_inventory": v, "derived": True,
                     "status": "ok", "http_status": None}
                 for k, v in DOC_TEMPLATES.items()},
-            "issuer_trust": issuers,
+            "issuer_trust": {},   # depopulated 2026-08-26 (sole source, the
+                                  # API-Setu catalog digest, was retired with it)
             "qr_schemes": QR_SCHEMES,
             "official_content_baselines": [],
             "bookkeeping": {"unreachable_sources": [
@@ -294,7 +252,7 @@ def build(cache_dir: Path, version: str, do_network: bool) -> dict:
     idx_path.write_bytes(json.dumps(index, indent=2, ensure_ascii=False).encode())
     return {"index_path": str(idx_path), "refresh": refresh,
             "n_templates": len(index["entries"]["document_templates"]),
-            "n_issuers": len(issuers), "n_qr": len(QR_SCHEMES),
+            "n_issuers": 0, "n_qr": len(QR_SCHEMES),
             "n_baselines": len(index["entries"]["official_content_baselines"]),
             "unreachable": [u["host"] for u in
                             index["entries"]["bookkeeping"]["unreachable_sources"]]}
