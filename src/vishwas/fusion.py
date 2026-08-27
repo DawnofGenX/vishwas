@@ -136,8 +136,29 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "freqband.prob": 0.5,
         "faceforensics.prob": 1.0,
     },
-    "document_generic": {},
-    "unclassified": {},
+    # document_generic / unclassified previously had EMPTY weight maps, which
+    # made FusionEngine.decide hit its total_w==0 guard and force
+    # UNABLE_TO_VERIFY for EVERY generic document and every unrecognised file —
+    # regardless of what actually ran. They now carry the file-scan signals
+    # that apply to any blob, so a document/unknown file that IS scanned gets a
+    # real verdict (and, with the n_val==0 gate above, an honest UNVERIFIED
+    # when no scanner is provisioned). Raw entropy anomaly is intentionally
+    # omitted from document_generic: compressed PDFs/office files are
+    # legitimately high-entropy and would false-flag as "packed".
+    "document_generic": {
+        "vt.positives_ratio": 4.0,
+        "clamav.detected": 3.5,
+        "yara.hit_count_norm": 2.5,
+        "ext_mismatch.present": 1.5,
+        "sandbox.malicious": 4.0,
+    },
+    "unclassified": {
+        "vt.positives_ratio": 4.0,
+        "clamav.detected": 3.5,
+        "yara.hit_count_norm": 2.5,
+        "ext_mismatch.present": 1.0,
+        "sandbox.malicious": 4.0,
+    },
 }
 
 # signal key -> (CheckResult.name, signal key, parsing kind, contributes_to_prob_list)
@@ -299,6 +320,49 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     return eff <= 0.45
 
 
+def _file_clean(by_name: dict[str, Any]) -> bool:
+    """True when a file was ACTUALLY scanned by a decisive detector and every
+    signal came back clean, so it may read LOW/trust instead of pinning at the
+    MEDIUM midpoint (risk-only weights leave TRUST otherwise unreachable).
+
+    Corroboration-gated so it cannot false-clean a threat:
+      - at least ONE decisive scanner (ClamAV / YARA-X / VirusTotal) must have
+        RUN (usable) — a file with only heuristic statics is not decisively
+        clean, it is merely un-scanned (handled as UNVERIFIED upstream);
+      - no decisive scanner flagged (clamav detected / yara hits / vt positives);
+      - a dynamic sandbox, if it ran, did not call it malicious;
+      - entropy, if measured, is not anomalous (packing/encryption);
+      - no declared-vs-verified extension mismatch is present.
+    """
+    decisive_ran = False
+    # (check_name, signal_key, "bad above" threshold; True == truthy-is-bad)
+    for name, key, bad in (("clamscan", "detected", True),
+                           ("yara_x", "hits_norm", 0.20),
+                           ("vt_reputation", "positives_ratio", 0.05)):
+        c = by_name.get(name)
+        if c is None or not c.usable():
+            continue
+        decisive_ran = True
+        v = c.signals.get(key)
+        if bad is True:
+            if bool(v):
+                return False
+        elif isinstance(v, (int, float)) and v > bad:
+            return False
+    if not decisive_ran:
+        return False
+    ds = by_name.get("dynamic_sandbox")
+    if ds is not None and ds.usable() and ds.signals.get("malicious"):
+        return False
+    fe = by_name.get("file_entropy")
+    if fe is not None and fe.usable() and fe.signals.get("anomaly"):
+        return False
+    em = by_name.get("ext_mismatch_flag")
+    if em is not None and em.usable() and "declared" in (em.signals or {}):
+        return False
+    return True
+
+
 def _url_clean(by_name: dict[str, Any]) -> bool:
     """True when a URL is clearly safe: PhishingScanner ran, did NOT flag phishing,
     and its risk_score_norm is low (<0.30, well under the is_phishing 0.70 line).
@@ -392,7 +456,14 @@ def _extract(spec: tuple[str, str, str, bool], c: CheckResult | None) -> tuple[s
     if c.status == "failed":
         return "failed", None
     if kind == KIND_CONST_TRUE:
-        return "value", 1.0
+        # Presence-flag signal: the BAD condition (e.g. an extension mismatch)
+        # exists only when the capability actually populated the keyed signal.
+        # The orchestrator emits ext_mismatch_flag(status=ok) in BOTH the
+        # mismatch case (signals carry "declared"/"verified") and the match
+        # case (signals={}); returning 1.0 unconditionally made every file with
+        # a *correct* extension carry a phantom risk vote. Fire only when the
+        # keyed signal is actually present; otherwise it is N/A (known_gap).
+        return ("value", 1.0) if key in c.signals else ("known_gap", None)
     if key not in c.signals:
         # check ran fine but this signal does not apply to this item type
         # (e.g. a PDF doc without a PGP validity verdict) — not missing evidence
@@ -499,6 +570,7 @@ class FusionEngine:
         missing: list[str] = []
         total_w = 0.0
         s = 0.0
+        n_val = 0                     # mapped signals that produced a real value
         for key, weight in wmap.items():
             spec = _SIGNAL_SOURCES.get(key)
             if spec is None:
@@ -520,10 +592,30 @@ class FusionEngine:
                 continue
             assert val is not None
             total_w += abs(weight)
+            n_val += 1
             cv = _calibrate(key, float(val))       # per-signal calibration (v2)
             s += weight * cv
             if spec[3]:
                 probs.append(cv)
+
+        # Selective prediction (2026-08-27 honesty fix): if NOT ONE mapped
+        # signal produced an actual value — every weighted detector was a known
+        # gap (tool/model not provisioned), absent, or failed — we have zero
+        # real evidence. Previously this fell through to x=0 -> sigmoid(0)=0.5,
+        # pinning EVERY un-provisioned item to the CAUTION ("MEDIUM") band. A
+        # confident-looking MEDIUM from no evidence is the exact overclaim the
+        # reliability design forbids; the honest answer is UNABLE_TO_VERIFY.
+        # (A detector that RAN and read low still yields a value here, so a
+        # genuinely-clean scan is unaffected and can reach TRUST below.)
+        if n_val == 0:
+            gap_reason = ("all_detectors_gated" if known_gaps
+                          else "no_detector_evidence")
+            return FusionDecision(
+                verdict=Verdict.UNABLE_TO_VERIFY, score=0.0, raw=0.0,
+                disagreement=0.0,
+                reasons=[gap_reason, f"gated_tools:{len(known_gaps)}"],
+                confidence=0.0, known_gaps=known_gaps,
+                missing_evidence=missing or sorted({c.name for c in usable})[:6])
 
         x = s / total_w if total_w > 0 else 0.0
         # total_w==0 guard (2026-08-25): targets with no mapped weights (document_generic,
@@ -545,19 +637,27 @@ class FusionEngine:
         _CLEAN_MIN_SIGNALS = 3
         if total_w > 0:
             present_vals: list[float] = []
+            const_risk_present = False
             for key2, w2 in wmap.items():
                 spec2 = _SIGNAL_SOURCES.get(key2)
                 if spec2 is None:
                     continue
-                # KIND_CONST_TRUE signals are presence-flags: value 1.0 means the BAD
-                # condition exists (e.g. ext mismatch). Absent check => N/A, not risky.
+                # KIND_CONST_TRUE signals are presence-flags: an extracted value
+                # (1.0) means the BAD condition IS present (e.g. an extension
+                # mismatch). Such a flag never joins present_vals (it is not a
+                # 0..1 probability), but when it fires it DISQUALIFIES the
+                # all-clean bonus — otherwise a PE disguised as a PDF that is
+                # merely AV-clean would be masked as clean. Absent flag => N/A.
                 if spec2[2] == "const_true":
-                    st0 = _extract(spec2, by_name.get(spec2[0]))[0]
-                    continue  # never counts toward (or against) the clean gate
+                    if _extract(spec2, by_name.get(spec2[0]))[0] == "value":
+                        const_risk_present = True
+                    continue
                 st2, val2 = _extract(spec2, by_name.get(spec2[0]))
                 if st2 == "value" and isinstance(val2, (int, float)):
                     present_vals.append(float(val2))
-            if len(present_vals) >= _CLEAN_MIN_SIGNALS and all(v <= _CLEAN_EPS for v in present_vals):
+            if (not const_risk_present
+                    and len(present_vals) >= _CLEAN_MIN_SIGNALS
+                    and all(v <= _CLEAN_EPS for v in present_vals)):
                 x += -1.8
         # logistic squash keeps range (0,1) and is robust to weight drift.
         # Temperature 4.0 (was 6.0, real-video calibration 2026-08-25): with the
@@ -655,6 +755,19 @@ class FusionEngine:
         # AND low score together, so a flagged phish can never reach LOW.
         if target == "url_phishing" and verdict is not Verdict.DO_NOT_USE \
                 and _url_clean(by_name):
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
+        # CLEAN-SIDE TRUST for files (2026-08-27): a file that a decisive scanner
+        # (ClamAV / YARA-X / VT) actually inspected and cleared reads LOW/trust.
+        # Without this every scanned-clean file sits at MEDIUM forever (all file
+        # weights are positive -> x~0 -> sigmoid ~0.5 -> CAUTION). Corroborated:
+        # a decisive detector must have RUN and found nothing, entropy is normal,
+        # and no extension mismatch — so a detected/packed/mismatched file can
+        # never reach LOW. An un-scanned file has no decisive detector and is
+        # UNVERIFIED (n_val gate), not falsely trusted.
+        if target in ("malicious_file", "document_generic", "unclassified") \
+                and verdict is not Verdict.DO_NOT_USE and _file_clean(by_name):
             verdict = Verdict.TRUST
             _clean_side_asserted = True
 
