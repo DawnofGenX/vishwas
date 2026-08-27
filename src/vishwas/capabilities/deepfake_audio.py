@@ -28,6 +28,40 @@ from ..model_adapters import resolve as _resolve_adapter, _call_model as _call_m
 from .base import CheckResult
 
 
+# 2026-08-26 audio-trustworthy fix: the webhook's docling-python tree cannot load
+# Wav2Vec2Model (transformers-5.15 + accelerate circular-import / lib.GEN_EMAIL),
+# so in-process aasist3 _load_weights() returns None -> missing_dependency -> the
+# audio channel read MEDIUM/UNVERIFIED. The ONE env that loads it is the isolated
+# .venv-ambient tree (proven: bonafide 0.0000 / spoof 0.9966 on the official eval).
+# deepfake_audio shells out to this helper for the aasist3 (torch) crop when the
+# in-process arch is unavailable. Score-of-record polarity matches Track C.
+_AASIST3_HELPER = str(Path(__file__).resolve().parents[2] / "scripts" / "audio_score_aasist3.py")
+_VENV_AMBIENT_PY = "/home/hermes/.venv-ambient/bin/python"
+_AASIST3_SUBPROC_TIMEOUT_S = 150  # first load ~37s + inference; bounded
+
+
+def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIST3_SUBPROC_TIMEOUT_S) -> float | None:
+    """Score one crop via the .venv-ambient helper. Returns spoof posterior [0,1]
+    or None on any failure (never fabricates)."""
+    try:
+        r = subprocess.run(
+            [_VENV_AMBIENT_PY, _AASIST3_HELPER, str(crop), "--device", device or "cpu"],
+            capture_output=True, text=True, timeout=timeout_s)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        x = line.strip()
+        if x.startswith("#") or not x:
+            continue
+        try:
+            return float(x)
+        except ValueError:
+            continue
+    return None  # no parseable posterior line
+
+
 def _load_weights(env: str):
     """Registry-gated loader; returns None unless env path exists AND torch is
     importable. Routes through model_adapters so AASIST/SSL/FakeMamba families
@@ -130,6 +164,18 @@ class DeepfakeAudioCapability:
     def _multi_crop(self, model_id: str, env: str, n_crops: int, ctx: JobContext) -> list[CheckResult]:
         name = model_id.lower()
         m = _load_weights(env)
+        # 2026-08-26 audio fix (subprocess fallback): when the in-process arch
+        # cannot load on the webhook's docling-python/transformers-5.15 stack
+        # (Wav2Vec2Model import fails -> None), the AASIST lane falls back to the
+        # proven .venv-ambient helper via subprocess so real audio reads LOW and
+        # fake audio reads HIGH instead of everything landing MEDIUM/UNVERIFIED.
+        # Only falls back when weights ARE provisioned (env path exists) but the
+        # in-process load failed — a genuine provisioning gap still reports the
+        # "weights not provisioned" unavailable. AASIST-only (fakemamba/ssl stay
+        # in-process: their arch returns None in .venv-ambient too — secondary).
+        _weights_set = os.environ.get(env) and os.path.exists(os.environ.get(env, ""))
+        if m is None and _weights_set and name == "aasist" and env == "VISHWAS_AASIST_WEIGHTS":
+            return self._multi_crop_subprocess_aasist(ctx, name, n_crops)
         if m is None:
             return [CheckResult(name + "_detector", "heavy", "unavailable",
                                  {"missing_dependency": "model-weights"},
@@ -152,6 +198,28 @@ class DeepfakeAudioCapability:
                              "n_crops_scored": len(probs),
                              "max_prob": round(max(probs), 3)},
                             f"{name} pass, median over {len(probs)} crop window(s)")]
+
+    def _multi_crop_subprocess_aasist(self, ctx: JobContext, name: str, n_crops: int) -> list[CheckResult]:
+        """AASIST3 via the .venv-ambient subprocess helper (the env that can load
+        Wav2Vec2Model). Scores the crop windows, returns the median spoof posterior.
+        Honest unavailable (never a fabricated score) on helper failure."""
+        crops = _crop_windows(ctx.quarantine_root / "crops", n_crops)
+        if not crops:
+            return [CheckResult(name + "_detector", "heavy", "unavailable", {},
+                                "no crop windows to score (audio decode unavailable); aasist3 skipped")]
+        device = os.environ.get("VISHWAS_DEVICE", "cpu")
+        probs = [_subprocess_aasist3_score(cp, device) for cp in crops]
+        probs = [p for p in probs if p is not None and 0.0 <= p <= 1.0]
+        if not probs:
+            return [CheckResult(name + "_detector", "heavy", "unavailable",
+                                {"missing_dependency": "subprocess-env"},
+                                "aasist3 subprocess scoring failed (see .venv-ambient/helper); audio evidence unavailable")]
+        return [CheckResult(name + "_detector", "heavy", "ok",
+                            {"prob_deepfake": round(statistics.median(probs), 3),
+                             "n_crops_scored": len(probs),
+                             "max_prob": round(max(probs), 3),
+                             "source": "aasist3.subprocess(.venv-ambient)"},
+                            f"aasist3 subprocess, median spoof {round(statistics.median(probs),3)} over {len(probs)} crop(s)")]
 
     def _xlsr_detector(self, ctx: JobContext, wav_path: Path) -> list[CheckResult]:
         """XLSR-Mamba-LA second opinion (MIT, arXiv 2411.10027) — independent
