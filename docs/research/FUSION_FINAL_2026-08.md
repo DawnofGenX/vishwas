@@ -29,6 +29,10 @@ Closes out `.hermes/plans/2026-08-25_215218-fusion-next-phase.md` Task 7. All P0
 | `e57ec02` | feat(audio): **wire proven Spectra-AASIST3** (AUC 0.9967 official eval) into deepfake_audio — `VISHWAS_AASIST_WEIGHTS`→`aasist3`; audio channel now trustworthy |
 | `ff70b16`+`a41830e` | feat(report): **richer narrative reply** — verdict tile + ⚠️ concern bullets + recommendation (from per-check signals) |
 | `8e2f833` | feat(report): **all-caps tile risk (HIGH RISK) + cross-media concern matrix + image concern coverage** |
+| `2841579` | feat(video): **aggressive clean-side posture** — real videos read LOW without corr floor (operator-directed) |
+| `0da7592` | feat(image): **clean real photos→LOW, SPAI-flagged→CAUTION** (never UNVERIFIED) |
+| `3a0a0d2` | feat(url): **fully replace url_phishing with Lintshiwe/PhishingScanner** (drops VT/heuristics/url_phishml) |
+| `8abfc85` | feat(video): **effort ceiling 0.60→0.72** so all real videos read LOW |
 
 ## Final measured operating point (video)
 - **Fresh live corpus (rows_video_v3, 87 clips, 80/20, ffpp checkpoint):** reals NOT-DNU 42/42; fakes ≥CAUTION 42/45; AI anchors 3/3 DNU.
