@@ -296,6 +296,17 @@ class MessageProcessor:
         self.session_state: dict[str, dict] = {}
         self.persist_outcomes = persist_outcomes
         self.outcome_log: Path | None = None
+        # Per-user language preference (permanent, survives restarts). Stored as
+        # {sid: lang_code} in a small JSON file — a benign UI setting, not
+        # scanned content, so it is exempt from the zero-retention purge. Path is
+        # overridable; set VISHWAS_LANG_PREFS="" to disable persistence entirely.
+        self.default_lang = getattr(self.orch, "i18n_default", "en") or "en"
+        _pref_env = os.environ.get("VISHWAS_LANG_PREFS")
+        self.lang_prefs_path: Path | None = (
+            None if _pref_env == ""
+            else Path(_pref_env) if _pref_env
+            else self.workdir / "lang_prefs.json")
+        self.lang_prefs: dict[str, str] = self._load_lang_prefs()
         # 2.3 ops: /health job counters (ok/failed classification below).
         self.counters = JobCounters()
         # 2.1: sessions explicitly closed while a heavy stage is still running;
@@ -308,12 +319,76 @@ class MessageProcessor:
         """Mark a chat session closed: later heavy-stage follow-ups drop."""
         self.closed_sessions.add(sid)
 
+    # ------------------------------------------------- language preference ----
+    def _load_lang_prefs(self) -> dict[str, str]:
+        if not self.lang_prefs_path:
+            return {}
+        try:
+            if self.lang_prefs_path.exists():
+                data = json.loads(self.lang_prefs_path.read_text())
+                if isinstance(data, dict):
+                    return {str(k): str(v) for k, v in data.items()}
+        except Exception:  # noqa: BLE001 — a bad prefs file must never break intake
+            pass
+        return {}
+
+    def _set_lang_pref(self, sid: str, code: str) -> None:
+        """Record a user's chosen language and persist it (permanent)."""
+        self.lang_prefs[sid] = code
+        if not self.lang_prefs_path:
+            return
+        try:
+            self.lang_prefs_path.parent.mkdir(parents=True, exist_ok=True)
+            self.lang_prefs_path.write_text(json.dumps(self.lang_prefs))
+        except Exception:  # noqa: BLE001 — persistence is best-effort
+            pass
+
+    def _lang_for(self, sid: str, st: dict) -> str:
+        """The reply language for this user: their saved choice, else the fixed
+        default. NEVER auto-detected from message content (operator decision)."""
+        return st.get("lang") or self.lang_prefs.get(sid) or self.default_lang
+
     def process(self, msg_dict: dict) -> dict:
         """Returns the delivery payload {jid, reply, verdict...} for this message."""
         from .orchestrator import maybe_greet
-        greeting = maybe_greet(msg_dict, self.session_state)
+        from .i18n import (parse_language_request, language_menu_text,
+                           language_display_name, t)
         sid = msg_dict.get("session_key") or msg_dict.get("id") or "anon"
         st = self.session_state.setdefault(sid, {})
+        # maybe_greet (called below) reads st["greeted"]; since we now touch the
+        # session dict first, seed the keys it expects so it still works.
+        st.setdefault("greeted", False)
+        st.setdefault("last_replied_ts", 0)
+
+        # Language selection is handled BEFORE the scam-check pipeline so a
+        # request to change language is never treated as content to verify.
+        # Only text-only messages qualify (a media message is always content).
+        if not msg_dict.get("media_path") and not msg_dict.get("url"):
+            lc = parse_language_request(msg_dict.get("text") or "",
+                                        awaiting=bool(st.get("awaiting_lang")))
+            if lc is not None:
+                if lc[0] == "set":
+                    code = lc[1]
+                    st["lang"] = code
+                    self._set_lang_pref(sid, code)   # persist (permanent)
+                    st.pop("awaiting_lang", None)
+                    reply = t("language_set", code,
+                              name=language_display_name(code))
+                else:  # offer the numbered chooser, then wait for the reply
+                    st["awaiting_lang"] = True
+                    reply = language_menu_text(self._lang_for(sid, st))
+                st["last_replied_ts"] = time.time()
+                st["last_activity_mono"] = time.monotonic()
+                return {"jid": sid, "reply": reply, "outcome": None,
+                        "language_command": True}
+
+        # Reply language = the user's saved choice, else the fixed default.
+        # We ALWAYS pin sender_lang (never leave it for content auto-detection):
+        # language is chosen explicitly and remembered, not guessed per message.
+        if not msg_dict.get("sender_lang"):
+            msg_dict = {**msg_dict, "sender_lang": self._lang_for(sid, st)}
+
+        greeting = maybe_greet(msg_dict, self.session_state)
         qwork = self.workdir / sid[:24]
         qwork.mkdir(parents=True, exist_ok=True)
 

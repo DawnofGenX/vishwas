@@ -289,8 +289,12 @@ def main_cli(argv: list[str]) -> int:
 
     out = MessageProcessor(orch, persist_outcomes=False).process(msg)
     print(out["reply"])
+    od = out.get("outcome")
+    if od is None:
+        # a language-selection reply (or other non-analysis command) — no
+        # verdict/checks to print.
+        return 0
     print("--- debug ---")
-    od = out["outcome"]
     print(json.dumps({k: od[k] for k in ("job_id", "verdict", "confidence", "language", "wall_s", "purged")}, indent=2))
     print("checks:")
     for c in od["checks"]:
