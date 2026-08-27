@@ -265,6 +265,23 @@ def _demo_feature_layout(target: str) -> list[str]:
     return [k for k in WEIGHTS.get(target, {}) ]
 
 
+def _demo_signal_directions(target: str) -> dict[str, float]:
+    """Map each of the target's CURRENT weighted signals to a signed direction
+    for the synthetic demo, derived from the sign of its fusion weight:
+      +weight (risk-increasing, e.g. clamav.detected) -> higher for fraud;
+      -weight (risk-decreasing, e.g. gov signature.valid) -> higher for clean.
+    This replaces a hardcoded name map that had gone stale against the refactored
+    signal set (its keys — vt.url_positives_ratio, phish.heuristic_score, … — no
+    longer exist, so every signal fell to a flat default and the demo carried no
+    learnable structure). Keying off the live WEIGHTS keeps the demo honest for
+    whatever signals a target actually has today."""
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    from vishwas.fusion import WEIGHTS
+    return {k: (1.0 if w >= 0 else -1.0) for k, w in WEIGHTS.get(target, {}).items()}
+
+
 def generate_demo_dataset(outdir: str | Path, n_clean: int = 150, n_fraud: int = 150,
                           seed: int = 42, target: str = "url_phishing") -> Path:
     """Simulate specialist-detection signals + ground-truth labels for one
@@ -275,20 +292,24 @@ def generate_demo_dataset(outdir: str | Path, n_clean: int = 150, n_fraud: int =
     before relying on the calibrated output."""
     rng = random.Random(seed)
     sigs = _demo_feature_layout(target)
-    # informative signals get class-dependent means; rest stay near-uniform
-    informative = {
-        "vt.url_positives_ratio": (0.02, 0.75), "phish.heuristic_score": (0.10, 0.80),
-        "domain.young": (0.30, 0.90), "redirect.suspicious_hop": (0.05, 0.60),
-        "ssrf.blocked": (0.0, 0.30), "download.ext_mismatch": (0.02, 0.40),
-    }
+    # Each CURRENT signal gets a class-dependent mean whose direction follows the
+    # sign of its fusion weight (see _demo_signal_directions): risk-increasing
+    # signals read high for fraud/low for clean, risk-decreasing signals the
+    # reverse. This gives the stacker genuinely learnable structure aligned with
+    # how the signal is actually used, for whatever signals the target has.
+    directions = _demo_signal_directions(target)
+    _FRAUD_HI, _FRAUD_LO, _CLEAN_HI, _CLEAN_LO = 0.80, 0.15, 0.80, 0.12
     rows: list[dict] = []
     for label in (0, 1):
         cnt = n_clean if label == 0 else n_fraud
         for k in range(cnt):
             vec: list[float] = []
             for s in sigs:
-                lo, hi = informative.get(s, (0.1, 0.9))
-                mean = (lo + hi) / 2 if label == 1 else min(lo + 0.05, hi - 0.3)
+                d = directions.get(s, 1.0)   # unknown -> treat as risk-increasing
+                if label == 1:               # fraud row
+                    mean = _FRAUD_HI if d >= 0 else _FRAUD_LO
+                else:                        # clean row
+                    mean = _CLEAN_LO if d >= 0 else _CLEAN_HI
                 mean = max(0.02, min(mean, 0.98))
                 val = min(1.0, max(0.0, rng.gauss(mean, 0.12)))
                 # gated tools are "known gaps" more often: fraud pages less likely

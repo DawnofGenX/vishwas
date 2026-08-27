@@ -80,7 +80,8 @@ def detect_available_deps() -> set[str]:
     for wenv in ("VISHWAS_EFFORT_WEIGHTS",
                  "VISHWAS_DEMAMBA_WEIGHTS", "VISHWAS_FAKEMAMBA_WEIGHTS",
                  "VISHWAS_AASIST_WEIGHTS", "VISHWAS_SSL_AUDIO_WEIGHTS",
-                 "VISHWAS_HAVIC_WEIGHTS",
+                 "VISHWAS_XLSRMAMBA_WEIGHTS",  # was missing: xlsr-mamba alone
+                 "VISHWAS_HAVIC_WEIGHTS",      # would not flip the model-weights gate
                  "VISHWAS_IMAGE_FACE_WEIGHTS"):
         if env.get(wenv) and Path(env[wenv]).exists():
             deps.add("model-weights")
@@ -193,11 +194,43 @@ def run_doctor() -> int:
         if not ok:
             print(f"    fix: {fix}")
     print("=" * 60)
+    # Per-model learned-weight status — the biggest lever for image/video/audio
+    # accuracy. Each row: is the weight env var set AND does the file exist?
+    print("\nLearned detector weights (image / video / audio):")
+    _WEIGHT_ENVS = [
+        ("VISHWAS_IMAGE_FACE_WEIGHTS", "image  · SPAI spectral AI-image detector"),
+        ("VISHWAS_EFFORT_WEIGHTS", "video  · EFFORT face-forensics (strongest video model)"),
+        ("VISHWAS_HAVIC_WEIGHTS", "video  · HAVIC cross-modal A/V"),
+        ("VISHWAS_FAKEMAMBA_WEIGHTS", "audio  · FakeMamba (RawBMamba)"),
+        ("VISHWAS_AASIST_WEIGHTS", "audio  · AASIST3 anti-spoof"),
+        ("VISHWAS_XLSRMAMBA_WEIGHTS", "audio  · XLSR-Mamba"),
+        ("VISHWAS_SSL_AUDIO_WEIGHTS", "audio  · SSL wav2vec audio detector"),
+    ]
+    torch_ok = False
+    try:
+        import importlib.util as _ilu
+        if _ilu.find_spec("torch") is not None:
+            import torch.nn  # noqa: F401
+            torch_ok = True
+    except Exception:
+        torch_ok = False
+    for env_name, label in _WEIGHT_ENVS:
+        val = os.environ.get(env_name)
+        if val and Path(val).exists():
+            print(f"  ✅ {label}")
+        elif val:
+            print(f"  ⚠️  {label}  ({env_name} set but file not found: {val})")
+        else:
+            print(f"  ❌ {label}  (set {env_name}=/path/to/checkpoint)")
+    print(f"\n  torch (required to run any learned detector): {'✅ working' if torch_ok else '❌ missing/broken — learned detectors cannot run'}")
+    print("=" * 60)
     if missing_any:
         print("Missing detectors report 'unavailable' at runtime. With NONE of the\n"
               "above provisioned, media/URL checks honestly return UNVERIFIED and\n"
               "files fall back to static heuristics only (often MEDIUM). Install the\n"
-              "detectors above to get real LOW / MEDIUM / HIGH verdicts.")
+              "detectors above to get real LOW / MEDIUM / HIGH verdicts.\n"
+              "Image/video accuracy in particular is bounded by the learned weights\n"
+              "above — see scripts/fetch_model_weights.sh for what is fetchable.")
     else:
         print("All detector families provisioned. Verdicts run at full coverage.")
     return 0

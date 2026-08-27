@@ -868,7 +868,26 @@ class FusionEngine:
             calib = art.get("calibration") or {}
             if not target or "w" not in final_lr:
                 continue
-            self.lr_stacks[target] = _LRStackAdapter(target, final_lr["w"], final_lr["b"])
+            # Feature-layout guard (2026-08-27): a checkpoint trained for an OLD
+            # signal layout must NEVER be wired to the current one. The serving
+            # feature vector is [value, gap] per mapped signal, so its length is
+            # 2*len(WEIGHTS[target]); if the checkpoint's weight vector disagrees
+            # it was fit on a different feature set (e.g. the pre-refactor
+            # 7-signal url_phishing head vs today's 1-signal head). Silently
+            # zero-padding it applies weights to the WRONG features and can
+            # invert the verdict — so refuse to load it and keep the explicit
+            # weighted path instead.
+            expected = len(FusionEngine.feature_vector(target, []))
+            w = final_lr["w"]
+            if not isinstance(w, list) or len(w) != expected:
+                log.warning(
+                    "skipping stale fusion stack %s: target=%s trained for %s "
+                    "features but current layout needs %s — retrain with the "
+                    "current signal set (falling back to explicit weights)",
+                    art_file.name, target, len(w) if isinstance(w, list) else "?",
+                    expected)
+                continue
+            self.lr_stacks[target] = _LRStackAdapter(target, w, final_lr["b"])
             if calib:
                 self.calibration[target] = {"t": float(calib.get("t", 1.0)),
                                              "b": float(calib.get("b", 0.0))}
@@ -891,11 +910,14 @@ class _LRStackAdapter:
 
     def predict_proba(self, feats: dict[str, Any], checks: list[CheckResult]) -> tuple[float, str]:
         x = FusionEngine.feature_vector(self.target, checks)
-        # pad/truncate for version drift between trained & live feature sets
-        if len(x) < len(self.w):
-            x = x + [0.0] * (len(self.w) - len(x))
-        else:
-            x = x[:len(self.w)]
+        # Defense-in-depth: load_trained already rejects a mismatched checkpoint,
+        # but never silently pad/truncate here either — a feature-count mismatch
+        # means the weights map to different signals, so raise and let decide()
+        # fall back to the explicit weighted path rather than emit a wrong prob.
+        if len(x) != len(self.w):
+            raise ValueError(
+                f"feature/weight mismatch for {self.target}: "
+                f"{len(x)} live features vs {len(self.w)} trained weights")
         z = self.b + sum(wi * vi for wi, vi in zip(self.w, x))
         return min(1.0, max(0.0, _sigmoid(z))), f"lr_stack_oof:{self.target}"
 
