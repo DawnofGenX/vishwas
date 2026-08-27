@@ -126,7 +126,7 @@ def test_decorrelated_or_anti_never_trusts():
 
 
 def test_high_effort_real_like_never_trusts():
-    # even a real-sync clip with HIGH face-forensics (swap-like) stays not-LOW
+    # even a real-sync clip with clear face-forensics (>0.72) stays not-LOW
     checks = [
         _ck("effort_face_forensics", {"prob_deepfake": 0.9}),
         _ck("cross_modal_av", {"av_correlation": 0.79, "best_lag_ms": 0,
@@ -136,3 +136,17 @@ def test_high_effort_real_like_never_trusts():
     ]
     d = FusionEngine().decide("deepfake_video", checks)
     assert d.verdict is not Verdict.TRUST, f"high-effort must not trust: {d.verdict}"
+
+
+def test_mid_effort_071_real_now_trusts():
+    # Aggressive posture: genuine phone video measuring effort 0.71 (>old 0.60 bar)
+    # still reads LOW; only >0.72 (a clear face-forensics flag) blocks trust.
+    checks = [
+        _ck("effort_face_forensics", {"prob_deepfake": 0.71}),
+        _ck("cross_modal_av", {"av_correlation": 0.54, "best_lag_ms": 198,
+                               "alignment_class": "weakly_synced", "av_risk_addition": 0.1,
+                               "av_synced_clean": 0.0}),
+        _ck("frame_heuristics", {"prob_deepfake": 0.08}),
+    ]
+    d = FusionEngine().decide("deepfake_video", checks)
+    assert d.verdict is Verdict.TRUST, f"mid-effort real should trust: {d.verdict}"

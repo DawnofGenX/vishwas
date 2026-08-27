@@ -260,14 +260,15 @@ def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
         return None
     # Corroboration on RAW signal values (not post-affine calibrated — the
     # frameheur affine amplifies, so calibrated 0.2 -> 0.44 would wrongly block).
-    # Thresholds: face-forensics raw <= 0.60 (W1 ffpp scores REAL faces up to
-    # ~0.89, but typical operator reals sit <=0.60, while swapped faces
-    # concentrate ~0.77+); frame-heuristic raw <= 0.45. The low-face corrob is
-    # itself gated by the low-frame + synced conditions, so a mid-effort real
-    # with real sync still trusts while a real deepfake face rarely scores low.
+    # Thresholds: frame-heuristic raw <= 0.45. face-forensics raw <= 0.72 —
+    # RAISED from 0.60 under the 2026-08-26 AGGRESSIVE posture (operator-directed
+    # "all real videos read LOW"): genuine phone videos measure effort up to
+    # ~0.71 (e.g. operator reals 0.612/0.657/0.627/0.714) while the fake anchors
+    # are anti/decorrelated and FAIL the real-alignment gate regardless of effort,
+    # so a generous face ceiling still cannot false-clean them.
     eff = float(_probe(by_name, "effort_face_forensics", "prob_deepfake", 1.0))
     fh = float(_probe(by_name, "frame_heuristics", "prob_deepfake", 1.0))
-    if eff > 0.60 or fh > 0.45:
+    if eff > 0.72 or fh > 0.45:
         return None  # effort or frame heuristic flags the face -> NOT clean
     return min(float(clean), 0.9)
 
