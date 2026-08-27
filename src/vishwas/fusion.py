@@ -239,8 +239,21 @@ def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
     flips a genuinely-risky clip to trust. Requirement: raw<=0.15 needs x<=-0.44.
     """
     cm = by_name.get("cross_modal_av")
-    if cm is None or not cm.usable():
-        return None  # silent clip / no cross-modal evidence -> no clean bonus
+    cm_ok = cm is not None and cm.usable()
+    # NO-AUDIO CLEAN PATH (2026-08-26, false-positive fix): a silent/no-audio real
+    # video has no cross-modal evidence. The operator's silent real clips stuck at
+    # MEDIUM because the clean side required audio. Allow a clean bonus for silent
+    # clips from low face-forensics + low frameheur alone (the same corroboration,
+    # minus the audio-sync requirement). Guards: high face, high frameheur, or a
+    # decorrelated/anti signal (when audio IS present) all still fail clean.
+    if not cm_ok:
+        eff = float(_probe(by_name, "effort_face_forensics", "prob_deepfake", 1.0))
+        fh = float(_probe(by_name, "frame_heuristics", "prob_deepfake", 1.0))
+        if eff > 0.72 or fh > 0.45:
+            return None  # face or frame flags -> NOT clean even for silent real
+        if eff < 0.0:  # effort failed/unusable -> no face corroboration -> not clean
+            return None
+        return 0.5  # silent real with low face + low frame: modest clean vote
     align = cm.signals.get("alignment_class")
     corr = cm.signals.get("av_correlation", 0.0)
     # AGGRESSIVE posture (2026-08-26, operator-directed): any genuinely real
