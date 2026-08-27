@@ -106,3 +106,31 @@ def test_content_message_still_analysed(tmp_path):
                     "text": "please check http://example.com/pay"})
     assert r.get("language_command") is not True
     assert r["outcome"] is not None             # pipeline DID run
+
+
+def test_no_autodetection_uses_default(tmp_path):
+    # a Hindi-script message from a user who has NOT chosen must reply in the
+    # fixed default (en), NOT auto-detected Hindi.
+    mp = _mp(tmp_path)
+    mp.process({"id": "u5", "session_key": "u5",
+                "text": "क्या यह लिंक सुरक्षित है?"})
+    assert mp.orch.last_lang == "en"
+
+
+def test_saved_choice_persists_across_restart(tmp_path):
+    mp = _mp(tmp_path)
+    mp.process({"id": "u6", "session_key": "u6", "text": "language tamil"})
+    # a fresh processor over the SAME workdir reloads the saved preference
+    mp2 = _mp(tmp_path)
+    assert mp2.lang_prefs.get("u6") == "ta"
+    mp2.process({"id": "u6", "session_key": "u6", "text": "http://x.com"})
+    assert mp2.orch.last_lang == "ta"
+
+
+def test_persistence_disabled_via_empty_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISHWAS_LANG_PREFS", "")
+    mp = _mp(tmp_path)
+    assert mp.lang_prefs_path is None           # disabled: nothing written
+    mp.process({"id": "u7", "session_key": "u7", "text": "hindi"})
+    mp2 = _mp(tmp_path)
+    assert mp2.lang_prefs.get("u7") is None      # not persisted
