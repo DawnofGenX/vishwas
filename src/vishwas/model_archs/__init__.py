@@ -33,6 +33,10 @@ _FAMILIES = {
     # SPAI (CVPR'25 spectral AI-image detector, Apache-2.0) — the image_facecheck
     # heavy gate; see model_archs/spai.py provenance header + _spai/PROVENANCE.md.
     "spai": "spai",
+    # Locally fine-tuned real-vs-AI image classifier produced by
+    # ml/image_finetune/train_image_detector.py.  Checkpoint metadata selects
+    # this family dynamically while SPAI remains the image-slot default.
+    "efficientnet_b0": "effnet_image",
 }
 
 

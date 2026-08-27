@@ -296,7 +296,21 @@ def _arch_aware_load(path: str, family: str | None = None, *,
         return None
     if arch is _ARCH_UNSET:
         fam = family or _ARCH_FAMILIES.get(env, "")
+        # The image env is intentionally polymorphic: legacy/provisioned SPAI
+        # checkpoints have no ``arch=efficientnet_b0`` marker, while the local
+        # fine-tuning pipeline does.  Select only from explicit metadata so a
+        # malformed/foreign checkpoint cannot silently enter the wrong model.
+        if (env == "VISHWAS_IMAGE_FACE_WEIGHTS" and isinstance(raw, dict)
+                and raw.get("arch") == "efficientnet_b0"):
+            fam = "efficientnet_b0"
         spec = get_arch(fam) if fam else None
+        configure = getattr(spec, "configure_checkpoint", None)
+        if configure is not None:
+            try:
+                configure(raw)
+            except Exception:
+                _pending_load_reason[0] = ARCH_UNAVAILABLE_REASON
+                return None
     else:
         spec = arch
     if spec is None:
