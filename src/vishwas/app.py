@@ -5,6 +5,7 @@ Run modes:
              vishwas-cli --text "https://example.com" 
              vishwas-cli --file /path/to/sample.apk [--lang hi]
              vishwas-cli --greet                (exercise greeting path only)
+             vishwas-cli --doctor               (report provisioned detectors + how to enable the rest)
   webhook  — HTTP server speaking the OpenWA webhook contract on :PORT
              GET  /health          -> rich JSON ops snapshot (see health_snapshot)
              POST /webhook/inbound -> parse event, run pipeline, reply via client
@@ -79,7 +80,8 @@ def detect_available_deps() -> set[str]:
     for wenv in ("VISHWAS_EFFORT_WEIGHTS",
                  "VISHWAS_DEMAMBA_WEIGHTS", "VISHWAS_FAKEMAMBA_WEIGHTS",
                  "VISHWAS_AASIST_WEIGHTS", "VISHWAS_SSL_AUDIO_WEIGHTS",
-                 "VISHWAS_HAVIC_WEIGHTS",
+                 "VISHWAS_XLSRMAMBA_WEIGHTS",  # was missing: xlsr-mamba alone
+                 "VISHWAS_HAVIC_WEIGHTS",      # would not flip the model-weights gate
                  "VISHWAS_IMAGE_FACE_WEIGHTS"):
         if env.get(wenv) and Path(env[wenv]).exists():
             deps.add("model-weights")
@@ -142,6 +144,98 @@ def build_orchestrator(deps: set[str] | None = None):
                         available_deps=deps)
 
 
+# ------------------------------------------------------------------ doctor --
+
+# Detector -> (what it unlocks, how to provision it). Drives `vishwas-cli
+# --doctor`, which explains WHY verdicts come back UNVERIFIED / MEDIUM: with no
+# detectors provisioned, learned/AV tiers all report 'unavailable', so media &
+# URLs honestly read UNVERIFIED and files fall back to static heuristics only.
+_DEP_GUIDE: list[tuple[str, str, str]] = [
+    ("clamav", "File/malware AV signatures (executables, APKs, PDFs)",
+     "Install ClamAV + signature DB: `sudo apt install clamav && sudo freshclam` "
+     "(or set VISHWAS_CLAMSCAN_BIN / VISHWAS_CLAMD_DB)."),
+    ("yara", "YARA-X rule matching (packers, malware families)",
+     "`pip install yara-x` (rules ship in assets/yara_rules; override with "
+     "VISHWAS_YARA_RULES)."),
+    ("vt", "VirusTotal hash reputation",
+     "Set VISHWAS_VT_API_KEY=<your VirusTotal API key>."),
+    ("model-weights", "Deepfake video/audio + image-forensics learned detectors",
+     "Install torch (working torch.nn) and point the weight env vars at real "
+     "checkpoints: VISHWAS_EFFORT_WEIGHTS, VISHWAS_FAKEMAMBA_WEIGHTS, "
+     "VISHWAS_AASIST_WEIGHTS, VISHWAS_SSL_AUDIO_WEIGHTS, VISHWAS_HAVIC_WEIGHTS, "
+     "VISHWAS_IMAGE_FACE_WEIGHTS. Launch via scripts/run_vishwas.sh."),
+    ("media-tools", "Frame/stream extraction for video & audio",
+     "Install ffmpeg (`sudo apt install ffmpeg`) or set VISHWAS_FFMPEG_BIN."),
+    ("ocr", "Document text extraction (Aadhaar/certificate OCR)",
+     "Install Tesseract (`sudo apt install tesseract-ocr`)."),
+    ("pades", "PDF digital-signature (PAdES) verification for gov documents",
+     "`pip install asn1crypto cryptography`."),
+    ("llm", "Optional plain-language narration layer (advisory only)",
+     "Set OPENAI_API_KEY or VISHWAS_LLM_BASE_URL (never a decision-maker)."),
+    ("dynamic-sandbox", "Dynamic behavioral escalation for confirmed-suspicious files",
+     "Install firejail or set VISHWAS_CAPE_CMD."),
+]
+
+
+def run_doctor() -> int:
+    """Print a provisioning report: what each detector unlocks, whether it is
+    available on THIS machine, and the exact command to enable a missing one."""
+    deps = detect_available_deps()
+    have = "✅"
+    miss = "❌"
+    print("Vishwas detector inventory")
+    print("=" * 60)
+    print(f"Detected: {', '.join(sorted(deps)) or '(none beyond the Python stdlib)'}\n")
+    missing_any = False
+    for dep, unlocks, fix in _DEP_GUIDE:
+        ok = dep in deps
+        missing_any = missing_any or not ok
+        print(f"{have if ok else miss} {dep:<16} {unlocks}")
+        if not ok:
+            print(f"    fix: {fix}")
+    print("=" * 60)
+    # Per-model learned-weight status — the biggest lever for image/video/audio
+    # accuracy. Each row: is the weight env var set AND does the file exist?
+    print("\nLearned detector weights (image / video / audio):")
+    _WEIGHT_ENVS = [
+        ("VISHWAS_IMAGE_FACE_WEIGHTS", "image  · SPAI spectral AI-image detector"),
+        ("VISHWAS_EFFORT_WEIGHTS", "video  · EFFORT face-forensics (strongest video model)"),
+        ("VISHWAS_HAVIC_WEIGHTS", "video  · HAVIC cross-modal A/V"),
+        ("VISHWAS_FAKEMAMBA_WEIGHTS", "audio  · FakeMamba (RawBMamba)"),
+        ("VISHWAS_AASIST_WEIGHTS", "audio  · AASIST3 anti-spoof"),
+        ("VISHWAS_XLSRMAMBA_WEIGHTS", "audio  · XLSR-Mamba"),
+        ("VISHWAS_SSL_AUDIO_WEIGHTS", "audio  · SSL wav2vec audio detector"),
+    ]
+    torch_ok = False
+    try:
+        import importlib.util as _ilu
+        if _ilu.find_spec("torch") is not None:
+            import torch.nn  # noqa: F401
+            torch_ok = True
+    except Exception:
+        torch_ok = False
+    for env_name, label in _WEIGHT_ENVS:
+        val = os.environ.get(env_name)
+        if val and Path(val).exists():
+            print(f"  ✅ {label}")
+        elif val:
+            print(f"  ⚠️  {label}  ({env_name} set but file not found: {val})")
+        else:
+            print(f"  ❌ {label}  (set {env_name}=/path/to/checkpoint)")
+    print(f"\n  torch (required to run any learned detector): {'✅ working' if torch_ok else '❌ missing/broken — learned detectors cannot run'}")
+    print("=" * 60)
+    if missing_any:
+        print("Missing detectors report 'unavailable' at runtime. With NONE of the\n"
+              "above provisioned, media/URL checks honestly return UNVERIFIED and\n"
+              "files fall back to static heuristics only (often MEDIUM). Install the\n"
+              "detectors above to get real LOW / MEDIUM / HIGH verdicts.\n"
+              "Image/video accuracy in particular is bounded by the learned weights\n"
+              "above — see scripts/fetch_model_weights.sh for what is fetchable.")
+    else:
+        print("All detector families provisioned. Verdicts run at full coverage.")
+    return 0
+
+
 # --------------------------------------------------------------------- CLI --
 
 def main_cli(argv: list[str]) -> int:
@@ -152,11 +246,16 @@ def main_cli(argv: list[str]) -> int:
     ap.add_argument("--url", action="store_true", help="treat --text strictly as a URL")
     ap.add_argument("--lang", default="en")
     ap.add_argument("--greet", action="store_true", help="only exercise the greeting path")
+    ap.add_argument("--doctor", action="store_true",
+                    help="report which detectors are provisioned and how to enable the rest")
     ap.add_argument("--deps", default="", help="comma-separated forced deps (override auto-detect)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=os.environ.get("VISHWAS_LOG_LEVEL", "INFO"),
                         format="%(levelname)s %(name)s: %(message)s")
+
+    if args.doctor:
+        return run_doctor()
 
     if args.greet:
         orch = build_orchestrator()

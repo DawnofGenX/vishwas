@@ -34,6 +34,15 @@ def default_capabilities(available_deps: set[str]) -> dict[str, list]:
         pass
     try:
         caps["malicious_file"].append(MaliciousFileCapability())
+        # Generic documents and unrecognised files used to have NO capability
+        # wired at all, so nothing ran and fusion dead-ended at UNVERIFIED. Run
+        # the same content-agnostic file scanner (VT hash / ClamAV / YARA /
+        # entropy) on them so a malicious PDF or unknown blob is actually
+        # inspected; the fusion weight maps for these targets consume its
+        # signals. (A dedicated document analyzer — embedded-URL / macro / JS —
+        # is a worthwhile future addition on top of this.)
+        caps["document_generic"].append(MaliciousFileCapability())
+        caps["unclassified"].append(MaliciousFileCapability())
     except Exception:
         pass
     try:
