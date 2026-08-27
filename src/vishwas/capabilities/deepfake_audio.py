@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 # .venv-ambient tree (proven: bonafide 0.0000 / spoof 0.9966 on the official eval).
 # deepfake_audio shells out to this helper for the aasist3 (torch) crop when the
 # in-process arch is unavailable. Score-of-record polarity matches Track C.
-_AASIST3_HELPER = str(Path(__file__).resolve().parents[2] / "scripts" / "audio_score_aasist3.py")
+_AASIST3_HELPER = str(Path(__file__).resolve().parents[3] / "scripts" / "audio_score_aasist3.py")
 _VENV_AMBIENT_PY = "/home/hermes/.venv-ambient/bin/python"
 _AASIST3_SUBPROC_TIMEOUT_S = 150  # first load ~37s + inference; bounded
 
@@ -52,7 +52,15 @@ def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIS
     logged loudly rather than swallowed: a silently dead interpreter (the
     .venv-ambient tree is an out-of-tree dependency that can break on its own)
     must be visible, not inferred from a suspicious absence of signal.
+
+    The subprocess also runs with a CLEAN PYTHONPATH: the webhook's inherited
+    docling-python/pylibs shadow .venv-ambient's own numpy/transformers (the
+    broken numpy._core._multiarray_umath breaks torch imports), so we strip
+    PYTHONPATH and let the venv's site-packages win.
     """
+    import copy
+    venv_env = copy.deepcopy(dict(os.environ))
+    venv_env.pop("PYTHONPATH", None)  # let .venv-ambient site-packages resolve
     if not os.path.exists(_VENV_AMBIENT_PY):
         log.warning(
             "aasist3 helper interpreter missing: %s — audio channel degraded to "
@@ -64,7 +72,7 @@ def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIS
     try:
         r = subprocess.run(
             [_VENV_AMBIENT_PY, _AASIST3_HELPER, str(crop), "--device", device or "cpu"],
-            capture_output=True, text=True, timeout=timeout_s)
+            capture_output=True, text=True, timeout=timeout_s, env=venv_env)
     except Exception as exc:
         log.warning("aasist3 helper failed to execute (%s: %s) — audio degraded",
                     type(exc).__name__, exc)
