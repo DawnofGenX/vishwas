@@ -27,6 +27,45 @@ from .base import CheckResult
 IMAGE_KINDS = {MediaKind.PNG, MediaKind.JPEG, MediaKind.WEBP, MediaKind.GIF,
                MediaKind.TIFF, MediaKind.HEIC}
 
+# 2026-08-27 image false-clean fix: NYUAD 3-class AI-image detector runs under the
+# isolated .venv-ambient tree (transformers 5.14.1 + torch 2.13) because the
+# webhook's docling-python/transformers-5.15 stack cannot import any ViT (same
+# GEN_EMAIL/circular-import failure as audio Wav2Vec2Model). Complements SPAI
+# (spectral) which scores some flux AI images ~0.0. Verified discriminates on our
+# corpus (flux_00/01/04 caught at 0.98-0.999; real photos 0.002-0.04).
+_NYUAD_HELPER = str(Path(__file__).resolve().parents[3] / "scripts" / "image_score_nyuad.py")
+_VENV_AMBIENT_PY = "/home/hermes/.venv-ambient/bin/python"
+_NYUAD_SUBPROC_TIMEOUT_S = 120
+
+
+def _subprocess_nyuad_score(path: Path, timeout_s: float = _NYUAD_SUBPROC_TIMEOUT_S) -> float | None:
+    """Score one image via the .venv-ambient NYUAD helper. Returns p_fake in [0,1]
+    or None on any failure (never fabricates). MUST run with a CLEAN PYTHONPATH so
+    .venv-ambient's own transformers/torch win (the webhook's inherited
+    docling-python/pylibs shadow them with the broken transformers-5.15 stack)."""
+    import copy
+    import subprocess
+    venv_env = copy.deepcopy(dict(os.environ))
+    venv_env.pop("PYTHONPATH", None)
+    try:
+        r = subprocess.run(
+            [_VENV_AMBIENT_PY, _NYUAD_HELPER, str(path)],
+            capture_output=True, text=True, timeout=timeout_s, env=venv_env)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        x = line.strip()
+        if x.startswith("#") or not x:
+            continue
+        try:
+            p = float(x)
+            return min(1.0, max(0.0, p))
+        except ValueError:
+            continue
+    return None
+
 
 def _load_image(p: Path, side: int = 512) -> np.ndarray | None:
     try:
@@ -158,6 +197,22 @@ class ImageFaceCheckCapability:
             except Exception as e:  # noqa: BLE001
                 out.append(CheckResult("image_face_forensics", "heavy", "failed",
                                        {"error_class": e.__class__.__name__}, "inference error"))
+        # NYUAD 3-class AI-image detector (second, INDEPENDENT signal) — runs under
+        # .venv-ambient (the webhook's transformers-5.15 stack can't import ViT).
+        # Complements SPAI: catches flux AI that SPAI scores ~0.0. If unavailable
+        # (no .venv-ambient), honest-unavailable — never fabricates a score.
+        _nyuad_p = None
+        if os.path.exists(_VENV_AMBIENT_PY) and os.path.exists(_NYUAD_HELPER):
+            _nyuad_p = _subprocess_nyuad_score(art.path)
+        if _nyuad_p is None:
+            out.append(CheckResult("nyuad_image_detector", "heavy", "unavailable",
+                                   {"missing_dependency": "subprocess-env"},
+                                   "NYUAD AI-image detector unavailable (no .venv-ambient); SPAI carries"))
+        else:
+            out.append(CheckResult("nyuad_image_detector", "heavy", "ok",
+                                   {"prob_deepfake": round(_nyuad_p, 3),
+                                    "source": "nyuad.subprocess(.venv-ambient)"},
+                                   "NYUAD 3-class AI-image detector pass"))
         out.extend(self._qr_evidence_for_gov_image(art))
         return out
 

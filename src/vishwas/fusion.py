@@ -306,6 +306,15 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     fb = _probe(by_name, "frequency_band_analysis", "prob_deepfake", 0.0)
     if fb > 0.60:
         return False  # freqband clearly flags -> not clean
+    # NYUAD (2026-08-27): the second, INDEPENDENT AI-image signal. A flux AI image
+    # often scores SPAI ~0.0 (the false-clean), so clean must ALSO require NYUAD low
+    # when it ran. If NYUAD is absent/unavailable, we still trust on SPAI (don't
+    # hard-block the whole image channel on a missing second detector).
+    ny = by_name.get("nyuad_image_detector")
+    if ny is not None and ny.usable():
+        ny_p = ny.signals.get("prob_deepfake", 1.0)
+        if isinstance(ny_p, (int, float)) and ny_p >= 0.50:
+            return False  # NYUAD flags it as AI (dalle/sd) -> not clean
     if eff_c is None or not eff_c.usable():
         return True  # SPAI absent, everything else clean -> trust
     eff = eff_c.signals.get("prob_deepfake", 1.0)
