@@ -38,6 +38,9 @@ Closes out `.hermes/plans/2026-08-25_215218-fusion-next-phase.md` Task 7. All P0
 | `2bdf188` | feat(audio): **standalone aasist3 helper** for .venv-ambient (env that can load Wav2Vec2Model) |
 | `325b080` | feat(audio): **aasist3 subprocess fallback** so audio fires on the webhook (was missing_dependency) |
 | `014ae52` | feat(audio): **clean audio→LOW, spoof→HIGH** (aasist3 surfaces a verdict, not UNVERIFIED) |
+| `27d0b04` | feat(video): **no-audio clean path** — silent real videos read LOW (low face+frame, no audio) |
+| `36bc181` | feat(image): **vendor NYUAD 3-class detector** (dalle/real/sd ViT) — second AI-image signal |
+| `5c01a62` | feat(image): **corroborate SPAI with NYUAD** so AI images stop reading LOW (7/8 flux→MEDIUM) |
 
 ## Final measured operating point (video)
 - **Fresh live corpus (rows_video_v3, 87 clips, 80/20, ffpp checkpoint):** reals NOT-DNU 42/42; fakes ≥CAUTION 42/45; AI anchors 3/3 DNU.
