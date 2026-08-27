@@ -22,7 +22,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."   # project root
 
-export PYTHONPATH="/home/hermes/pylibs:/home/hermes/docling-python:$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+# PYTHONPATH ORDER MATTERS (2026-08-26, audio-UNVERIFIED fix):
+#   docling-python (with its good numpy + torch) MUST precede pylibs. pylibs'
+#   numpy is STALE/BROKEN (numpy._core._multiarray_umath won't import); when it
+#   shadows docling-python's numpy, torch fails to import and every torch-gated
+#   audio check (aasist3/xlsr/fakemamba/ssl) silently returns None ->
+#   "missing_dependency" -> real audio reads MEDIUM/UNVERIFIED. Putting
+#   docling-python first gives numpy+torch from the good tree; cv2/yara_x/pylibs
+#   still resolve (verified: cv2 functional under docling-python numpy; yara_x
+#   /pefile/lief from pylibs). NEVER put pylibs ahead of docling-python.
+export PYTHONPATH="/home/hermes/docling-python:/home/hermes/pylibs:$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 : "${VISHWAS_FFMPEG_THREADS:=2}" ; export VISHWAS_FFMPEG_THREADS
 : "${VISHWAS_LOG_LEVEL:=INFO}"   ; export VISHWAS_LOG_LEVEL
 
