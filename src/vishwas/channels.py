@@ -311,9 +311,42 @@ class MessageProcessor:
     def process(self, msg_dict: dict) -> dict:
         """Returns the delivery payload {jid, reply, verdict...} for this message."""
         from .orchestrator import maybe_greet
-        greeting = maybe_greet(msg_dict, self.session_state)
+        from .i18n import (parse_language_request, language_menu_text,
+                           language_display_name, t)
         sid = msg_dict.get("session_key") or msg_dict.get("id") or "anon"
         st = self.session_state.setdefault(sid, {})
+        # maybe_greet (called below) reads st["greeted"]; since we now touch the
+        # session dict first, seed the keys it expects so it still works.
+        st.setdefault("greeted", False)
+        st.setdefault("last_replied_ts", 0)
+
+        # Language selection is handled BEFORE the scam-check pipeline so a
+        # request to change language is never treated as content to verify.
+        # Only text-only messages qualify (a media message is always content).
+        if not msg_dict.get("media_path") and not msg_dict.get("url"):
+            lc = parse_language_request(msg_dict.get("text") or "",
+                                        awaiting=bool(st.get("awaiting_lang")))
+            if lc is not None:
+                if lc[0] == "set":
+                    code = lc[1]
+                    st["lang"] = code
+                    st.pop("awaiting_lang", None)
+                    reply = t("language_set", code,
+                              name=language_display_name(code))
+                else:  # offer the numbered chooser, then wait for the reply
+                    st["awaiting_lang"] = True
+                    reply = language_menu_text(st.get("lang", "en"))
+                st["last_replied_ts"] = time.time()
+                st["last_activity_mono"] = time.monotonic()
+                return {"jid": sid, "reply": reply, "outcome": None,
+                        "language_command": True}
+
+        # Sticky preference: once a user has chosen a language, every reply uses
+        # it (instead of re-detecting per message) unless the caller overrode it.
+        if st.get("lang") and not msg_dict.get("sender_lang"):
+            msg_dict = {**msg_dict, "sender_lang": st["lang"]}
+
+        greeting = maybe_greet(msg_dict, self.session_state)
         qwork = self.workdir / sid[:24]
         qwork.mkdir(parents=True, exist_ok=True)
 

@@ -347,6 +347,86 @@ def detect_language(text: str) -> str:
     return "en"
 
 
+# --------------------------------------------------------- language selection
+# Lets a user CHOOSE their reply language instead of it being re-guessed from
+# every message. Recognised before the scam-check pipeline (see channels.py) so
+# a language request is never treated as content to verify.
+
+import re as _re
+
+_LANG_ORDER = ("en", "hi", "ta", "te", "ml", "kn", "bn")
+_LANG_NAMES = {"en": "English", "hi": "हिंदी", "ta": "தமிழ்", "te": "తెలుగు",
+               "ml": "മലയാളം", "kn": "ಕನ್ನಡ", "bn": "বাংলা"}
+
+# Full language NAMES — safe to accept as a bare, whole message ("hindi").
+_LANG_NAME_ALIASES = {
+    "english": "en", "angrezi": "en", "इंग्लिश": "en",
+    "hindi": "hi", "हिंदी": "hi", "हिन्दी": "hi",
+    "tamil": "ta", "தமிழ்": "ta",
+    "telugu": "te", "తెలుగు": "te",
+    "malayalam": "ml", "മലയാളം": "ml",
+    "kannada": "kn", "ಕನ್ನಡ": "kn",
+    "bengali": "bn", "bangla": "bn", "বাংলা": "bn",
+}
+# 2-letter codes are only honoured alongside a trigger or while awaiting a menu
+# reply — never as a bare message, so "hi" stays a greeting, not "set English".
+_LANG_CODE_ALIASES = {c: c for c in _LANG_ORDER}
+_LANG_TRIGGERS_LATIN = {"language", "lang", "bhasha", "bhaasha"}
+_LANG_TRIGGERS_NATIVE = ("भाषा", "மொழி", "భాష", "ಭಾಷೆ", "ভাষা")
+_TOKEN_RE = _re.compile(r"[a-zऀ-ൿ]+")
+
+
+def language_display_name(code: str) -> str:
+    return _LANG_NAMES.get(code, code)
+
+
+def language_menu_text(lang: str = "en") -> str:
+    """Numbered list of the supported languages, headed by a localized prompt."""
+    header = t("language_choose", lang)
+    body = "\n".join(f"{i + 1}. {_LANG_NAMES[c]}" for i, c in enumerate(_LANG_ORDER))
+    return f"{header}\n{body}"
+
+
+def parse_language_request(text: str, awaiting: bool = False):
+    """Classify a message as a language-selection interaction.
+
+    Returns ("set", code) to switch language, ("menu",) to offer the chooser,
+    or None if the message is not about language (so it goes to the normal
+    scam-check pipeline). `awaiting=True` means the previous reply WAS the
+    chooser, so a bare number / code / name counts as the answer.
+    """
+    s = (text or "").strip().lower()
+    if not s or len(s) > 40:            # long text => real content, not a command
+        return None
+    toks = set(_TOKEN_RE.findall(s))
+
+    if awaiting:
+        if s.isdigit():
+            n = int(s)
+            if 1 <= n <= len(_LANG_ORDER):
+                return ("set", _LANG_ORDER[n - 1])
+        if s in _LANG_NAME_ALIASES:
+            return ("set", _LANG_NAME_ALIASES[s])
+        if s in _LANG_CODE_ALIASES:
+            return ("set", _LANG_CODE_ALIASES[s])
+
+    # a bare full language name is an unambiguous switch on its own
+    if s in _LANG_NAME_ALIASES:
+        return ("set", _LANG_NAME_ALIASES[s])
+
+    has_trigger = (bool(toks & _LANG_TRIGGERS_LATIN)
+                   or any(nt in s for nt in _LANG_TRIGGERS_NATIVE))
+    if has_trigger:
+        for name, code in _LANG_NAME_ALIASES.items():   # "language hindi"
+            if name in toks or name in s:
+                return ("set", code)
+        for code in _LANG_ORDER:                        # "set language hi"
+            if code in toks:
+                return ("set", code)
+        return ("menu",)                                # just "language"
+    return None
+
+
 def load_custom_strings(path: str | Path | None = None) -> None:
     """Overlay user-supplied translations (json: {key:{lang:text}}) over defaults."""
     p = Path(path) if path else Path(__file__).parent / "i18n_extra.json"
@@ -358,6 +438,27 @@ def load_custom_strings(path: str | Path | None = None) -> None:
         except Exception:
             pass
 
+
+# Language-selection strings (2026-08-27). en authoritative; the Indic strings
+# are best-effort (same native-review-pending status as the rest of the corpus).
+_DEFAULTS.setdefault("language_choose", {
+    "en": "Choose your language — reply with the number:",
+    "hi": "अपनी भाषा चुनें — नंबर भेजकर जवाब दें:",
+    "ta": "உங்கள் மொழியைத் தேர்ந்தெடுக்கவும் — எண்ணை அனுப்புங்கள்:",
+    "te": "మీ భాషను ఎంచుకోండి — సంఖ్యను పంపండి:",
+    "ml": "നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക — നമ്പർ അയയ്ക്കുക:",
+    "kn": "ನಿಮ್ಮ ಭಾಷೆಯನ್ನು ಆರಿಸಿ — ಸಂಖ್ಯೆಯನ್ನು ಕಳುಹಿಸಿ:",
+    "bn": "আপনার ভাষা বেছে নিন — নম্বর পাঠান:",
+})
+_DEFAULTS.setdefault("language_set", {
+    "en": "✅ Language set to %(name)s. Send me any link, file, photo, video, or audio and I'll check whether it's safe.",
+    "hi": "✅ भाषा %(name)s पर सेट हो गई। कोई भी लिंक, फ़ाइल, फ़ोटो, वीडियो या ऑडियो भेजें — मैं जाँचूँगा कि वह सुरक्षित है या नहीं।",
+    "ta": "✅ மொழி %(name)s ஆக அமைக்கப்பட்டது. ஏதேனும் இணைப்பு, கோப்பு, படம், வீடியோ அல்லது ஆடியோ அனுப்புங்கள் — பாதுகாப்பானதா எனச் சரிபார்ப்பேன்.",
+    "te": "✅ భాష %(name)s కు సెట్ చేయబడింది. ఏదైనా లింక్, ఫైల్, ఫోటో, వీడియో లేదా ఆడియో పంపండి — సురక్షితమేనా అని తనిఖీ చేస్తాను.",
+    "ml": "✅ ഭാഷ %(name)s ആയി സജ്ജീകരിച്ചു. ഏതെങ്കിലും ലിങ്ക്, ഫയൽ, ഫോട്ടോ, വീഡിയോ അല്ലെങ്കിൽ ഓഡിയോ അയയ്ക്കൂ — സുരക്ഷിതമാണോ എന്ന് പരിശോധിക്കാം.",
+    "kn": "✅ ಭಾಷೆ %(name)s ಗೆ ಹೊಂದಿಸಲಾಗಿದೆ. ಯಾವುದೇ ಲಿಂಕ್, ಫೈಲ್, ಫೋಟೋ, ವೀಡಿಯೊ ಅಥವಾ ಆಡಿಯೊ ಕಳುಹಿಸಿ — ಸುರಕ್ಷಿತವೇ ಎಂದು ಪರಿಶೀಲಿಸುತ್ತೇನೆ.",
+    "bn": "✅ ভাষা %(name)s এ সেট করা হয়েছে। যেকোনো লিঙ্ক, ফাইল, ছবি, ভিডিও বা অডিও পাঠান — নিরাপদ কিনা পরীক্ষা করব।",
+})
 
 # MT-audit overlay (2026-08-21): 32 Google-Translate-rendered strings that
 # back-translated closer to the English corpus than the LLM drafts.
