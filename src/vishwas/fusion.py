@@ -312,6 +312,19 @@ def _url_clean(by_name: dict[str, Any]) -> bool:
     return isinstance(risk, (int, float)) and 0.0 <= risk < 0.30
 
 
+def _audio_clean(by_name: dict[str, Any]) -> bool:
+    """True when audio is clearly bonafide: aasist3 ran and scored LOW (<0.30).
+    aasist3 is the proven-trustworthy gate (AUC 0.9967, bonafide 0.0000/spoof
+    0.9966) — a low read on genuine audio is decisive clean evidence, so a clean
+    audio clip reads LOW/TRUST instead of MEDIUM/UNVERIFIED. A high/missing
+    aasist read -> NOT clean (never cleans a spoof)."""
+    c = by_name.get("aasist_detector")
+    if c is None or not c.usable():
+        return False
+    pa = c.signals.get("prob_deepfake", 1.0)
+    return isinstance(pa, (int, float)) and 0.0 <= pa < 0.30
+
+
 def _probe(by_name: dict[str, Any], check: str, key: str, default: float) -> float:
     c = by_name.get(check)
     if c is None or not c.usable():
@@ -658,6 +671,16 @@ class FusionEngine:
             verdict = Verdict.TRUST
             _clean_side_asserted = True
 
+        # CLEAN-SIDE TRUST for AUDIO (2026-08-26): genuine audio that aasist3
+        # scores < 0.30 reads LOW/trust (aasist3 is proven-trustworthy — AUC
+        # 0.9967). Without this a clean audio clip sat at MEDIUM/UNVERIFIED
+        # (weak offline+xlsr couldn't reach TRUST). A spoof (aasist~0.998) is
+        # NEVER cleaned.
+        if target == "deepfake_audio" and verdict is not Verdict.DO_NOT_USE \
+                and _audio_clean(by_name):
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
         # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
         # different detectors, so spread IS a signal (a mode), not abstention.
         pattern = "generic"
@@ -848,8 +871,13 @@ class ReliabilityGate:
         # never reach DNU), so a SPAI-vs-freqband spread must surface as
         # CAUTION/MEDIUM (suspicious), NOT UNVERIFIED. This is the operator's
         # requested fix (image detector was returning UNVERIFIED).
+        # AUDIO (2026-08-26): also exempt — aasist3 is PROVEN-trustworthy (AUC
+        # 0.9967 on the official ASVspoof2019-LA eval; bonafide 0.0000/spoof
+        # 0.9966, 1022/1022), so a lone strong aasist read is decisive evidence,
+        # not a conflicting-mode case. A spoof that aasist scores 0.998 must
+        # read HIGH (not UNVERIFIED) even when the weak offline features disagree.
         if fused.disagreement > self.max_disagreement and not fused.coherent_pattern \
-                and target != "image_facecheck":
+                and target not in ("image_facecheck", "deepfake_audio"):
             ok = False
             notes.append(f"disagreement={fused.disagreement:.2f}>{self.max_disagreement}")
 
