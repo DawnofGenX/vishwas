@@ -299,6 +299,19 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     return eff <= 0.45
 
 
+def _url_clean(by_name: dict[str, Any]) -> bool:
+    """True when a URL is clearly safe: PhishingScanner ran, did NOT flag phishing,
+    and its risk_score_norm is low (<0.30, well under the is_phishing 0.70 line).
+    A flagged or missing/high-risk scan -> NOT clean (never trusts a phish)."""
+    c = by_name.get("url_phish_scanner")
+    if c is None or not c.usable():
+        return False  # no scan / scan failed -> not clean
+    if c.signals.get("is_phishing", False):
+        return False  # scanner flagged it -> never clean
+    risk = c.signals.get("risk_score_norm", 1.0)
+    return isinstance(risk, (int, float)) and 0.0 <= risk < 0.30
+
+
 def _probe(by_name: dict[str, Any], check: str, key: str, default: float) -> float:
     c = by_name.get(check)
     if c is None or not c.usable():
@@ -632,6 +645,16 @@ class FusionEngine:
         # photo (the known ~24% false-positive) still reads CAUTION, not trust.
         if target == "image_facecheck" and verdict is not Verdict.DO_NOT_USE \
                 and _image_clean(by_name):
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
+        # CLEAN-SIDE TRUST for URLs (2026-08-26): a clearly-safe link — PhishingScanner
+        # did not flag it AND risk_score_norm < 0.30 — reads LOW/trust. Without this a
+        # benign URL sits at CAUTION forever (single positive weight -> raw~0.5 ->
+        # CAUTION, TRUST unreachable). Corroborated: the scanner's own is_phishing=False
+        # AND low score together, so a flagged phish can never reach LOW.
+        if target == "url_phishing" and verdict is not Verdict.DO_NOT_USE \
+                and _url_clean(by_name):
             verdict = Verdict.TRUST
             _clean_side_asserted = True
 

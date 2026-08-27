@@ -137,10 +137,30 @@ def test_fusion_high_risk_norm_do_not_use():
 
 
 def test_fusion_low_risk_norm_caution():
+    # NOTE 2026-08-26: benign URL clean-side override now promotes low-risk
+    # (norm<0.30, not flagged) to TRUST/LOW — so this reads trust, not caution.
     ck = CheckResult("url_phish_scanner", "mid", "ok",
                      {"risk_score": 10, "risk_score_norm": 0.1, "is_phishing": False})
     d = FusionEngine().decide("url_phishing", [ck])
-    assert d.verdict is Verdict.CAUTION
+    assert d.verdict is Verdict.TRUST, d.reasons
+
+
+def test_benign_url_reads_low():
+    # clean-side override: scanner ran, not flagged, low score -> TRUST/LOW
+    ck = CheckResult("url_phish_scanner", "mid", "ok",
+                     {"risk_score": 15, "risk_score_norm": 0.15, "is_phishing": False,
+                      "indicators": ["benign"]}, "")
+    d = FusionEngine().decide(target="url_phishing", checks=[ck])
+    assert d.verdict == Verdict.TRUST, d.reasons
+
+
+def test_flagged_phish_never_reads_low():
+    # scanner flagged it (is_phishing True) and high score -> NEVER TRUST/LOW
+    ck = CheckResult("url_phish_scanner", "mid", "ok",
+                     {"risk_score": 88, "risk_score_norm": 0.88, "is_phishing": True,
+                      "indicators": ["DNS resolution failed", "Connection failed"]}, "")
+    d = FusionEngine().decide("url_phishing", [ck])
+    assert d.verdict is not Verdict.TRUST, d.reasons
 
 
 def test_fusion_only_maps_url_phish_scanner_signal():

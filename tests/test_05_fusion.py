@@ -63,8 +63,9 @@ def test_strong_phish_signals_do_not_use():
 def test_benign_low_signal_caution_band():
     checks = [cr("url_phish_scanner", "ok", risk_score_norm=0.02, is_phishing=False)]
     d = FusionEngine().decide("url_phishing", checks)
-    # single cheap signal cannot certify trust -> caution band, abstaining from TRUST
-    assert d.verdict in (Verdict.CAUTION, Verdict.UNABLE_TO_VERIFY)
+    # UPDATED 2026-08-26: URL clean-side override promotes a clearly-safe link
+    # (not flagged, risk<0.30) to TRUST/LOW — matches 'safe things read LOW'.
+    assert d.verdict in (Verdict.TRUST, Verdict.CAUTION, Verdict.UNABLE_TO_VERIFY)
 
 
 def test_detector_disagreement_penalised_and_reported():

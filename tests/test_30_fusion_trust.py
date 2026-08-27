@@ -34,15 +34,13 @@ def _url_checks_clean() -> list[CheckResult]:
 
 
 def test_url_clean_low_risk_reads_caution_not_dnu():
-    """F-A (url, new posture): with PhishingScanner as the single weighted
-    detector there is exactly one signal, so the clean-side bonus (which needs
-    >=3 present signals) can never fire and TRUST is structurally unreachable
-    for url_phishing. A clean low-risk scan honestly reads CAUTION (never
-    DO_NOT_USE) — matching the operator's 'PhishingScanner ALONE decides' call."""
+    """UPDATED 2026-08-26: the URL clean-side override now promotes a clearly-safe
+    link (scanner ran, not flagged, risk<0.30) to TRUST/LOW. This matches the
+    operator's 'safe things read LOW' demo goal (earlier single-signal fusion made
+    TRUST structurally unreachable -> CAUTION; the override fixes that). A flagged
+    phish still NEVER reads LOW (covered by test_url_bad_stays_do_not_use)."""
     d = FusionEngine().decide("url_phishing", _url_checks_clean())
-    assert d.verdict is not Verdict.TRUST
-    assert d.verdict is not Verdict.DO_NOT_USE  # not overclaiming a clean link
-    assert d.verdict is Verdict.CAUTION
+    assert d.verdict is Verdict.TRUST
 
 
 def test_url_bad_stays_do_not_use():
@@ -55,11 +53,15 @@ def test_url_bad_stays_do_not_use():
 
 
 def test_partial_coverage_no_bonus():
-    """Only one signal ran -> no clean bonus -> NOT trustable."""
+    """One clean URL signal -> URL clean-side override promotes it to TRUST/LOW
+    (a clearly-safe link reads LOW by design). flag it -> not trustable."""
     checks = [_ck("url_phish_scanner", "ok", {"risk_score_norm": 0.02,
                                               "is_phishing": False})]
     d = FusionEngine().decide("url_phishing", checks)
-    assert d.verdict is not Verdict.TRUST
+    assert d.verdict is Verdict.TRUST
+    checks2 = [_ck("url_phish_scanner", "ok", {"risk_score_norm": 0.9,
+                                               "is_phishing": True})]
+    assert FusionEngine().decide("url_phishing", checks2).verdict is not Verdict.TRUST
 
 
 def test_malicious_file_clean_trust_and_eicar_dnu():
