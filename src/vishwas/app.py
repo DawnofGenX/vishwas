@@ -198,7 +198,7 @@ def run_doctor() -> int:
     # accuracy. Each row: is the weight env var set AND does the file exist?
     print("\nLearned detector weights (image / video / audio):")
     _WEIGHT_ENVS = [
-        ("VISHWAS_IMAGE_FACE_WEIGHTS", "image  · SPAI spectral AI-image detector"),
+        ("VISHWAS_IMAGE_FACE_WEIGHTS", "image  · SPAI or fine-tuned EfficientNet detector"),
         ("VISHWAS_EFFORT_WEIGHTS", "video  · EFFORT face-forensics (strongest video model)"),
         ("VISHWAS_HAVIC_WEIGHTS", "video  · HAVIC cross-modal A/V"),
         ("VISHWAS_FAKEMAMBA_WEIGHTS", "audio  · FakeMamba (RawBMamba)"),

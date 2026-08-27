@@ -118,10 +118,10 @@ class ImageFaceCheckCapability:
                                 "band_anomaly": anomaly,
                                 "source": "offline_frequency_heuristics"},
                                "offline frequency-band scan (fallback when face models absent)"))
-        # gated learned model — SPAI heavy gate (dedicated AI-image detector,
-        # CVPR'25): VISHWAS_IMAGE_FACE_WEIGHTS -> resolve('VISHWAS_IMAGE_FACE_WEIGHTS')
-        # gives the spai arch-adapter. EFFORT fallback below is backward-compat
-        # ONLY when the image-specific env is unset.
+        # Gated learned model — VISHWAS_IMAGE_FACE_WEIGHTS accepts SPAI or the
+        # fine-tuning pipeline's metadata-tagged EfficientNet-B0 checkpoint.
+        # EFFORT fallback below is backward-compat ONLY when the image-specific
+        # env is unset.
         # SPAI is ANY-RESOLUTION SPECTRAL: feeding it the fixed 512x512 resize
         # (img, used above for the freqband heuristic) collapsed its detection —
         # it needs the ORIGINAL-resolution photo. Load the full-res image for the
@@ -132,12 +132,12 @@ class ImageFaceCheckCapability:
         env, _p = _resolved_weights_env()
         adapter = _resolve_adapter(env) if env else None
         if env == "VISHWAS_IMAGE_FACE_WEIGHTS" and adapter is None:
-            # Belt-and-braces: if the dedicated spai adapter ever fails to
+            # Belt-and-braces: if the dedicated image adapter ever fails to
             # register, DO NOT silently fall through to the EFFORT chameleon gate
             # (the overfit that motivated this fix).
             out.append(CheckResult("image_face_forensics", "heavy", "unavailable",
                                    {"missing_dependency": "model-weights"},
-                                   "SPAI image-face gate not provisioned; frequency heuristic carries"))
+                                   "image-forensics gate not provisioned; frequency heuristic carries"))
             out.extend(self._qr_evidence_for_gov_image(art))
             return out
         m = _load_model()
