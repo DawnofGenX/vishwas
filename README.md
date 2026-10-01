@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/DawnofGenX/vishwas/master/docs/og-banner.png" alt="vishwas" width="100%"/></p>
+
 # Vishwas
 
 WhatsApp-first verification & safety platform. Users message a WhatsApp number; Vishwas checks what they send — **URLs, files (APK/PE/ELF/documents), images, audio, video, government documents** — and replies in plain language with a verdict, a **confidence band**, and practical next steps. Built for constrained CPU-only hardware (designed around an i5-8250U laptop), zero-cloud, stdlib-first, zero-retention by contract.
