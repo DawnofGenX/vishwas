@@ -15,6 +15,40 @@ WhatsApp-first verification & safety platform. Users message a WhatsApp number; 
 
 Deterministic routing end-to-end: input type → MIME/magic bytes → capability set. No LLM-gated decisions anywhere; the LLM (when provisioned) only *narrates* over already-computed evidence, behind a prompt-injection guard.
 
+## Measured results
+
+All figures below are from committed runs. Raw records are in `docs/research/`.
+
+**Operating point (video)** — fresh 87-clip live corpus, 80/20 split:
+
+| | result |
+|---|---|
+| Real clips not flagged DO_NOT_USE | 42/42 |
+| Fake clips at CAUTION or higher | 42/45 |
+| Test suite | 370 passed, 8 skipped |
+
+**Detector separation:**
+
+| Signal | Real | AI-generated |
+|---|---|---|
+| EFFORT | 0.302 | 0.677 |
+| SPAI (image) | 0.0015 | 0.661 |
+
+### Components rejected on evidence
+
+An audio detector was vendored, loaded cleanly (1022/1022 checkpoint keys) and passed its
+integration test — then rejected. It scored **AUC 0.54** on a held-out 240-clip ASVspoof2019-LA
+slice against a bar of **AUC >= 0.85** fixed before the run. The vendor reports 0.9967 on the full
+71,237-trial test set; we measured on a validation slice, and the gap is documented as unresolved.
+Audio therefore stays calibration-only.
+
+A learned fusion stack trained on out-of-fold predictions scored **OOF AUC 0.512** against a
+**0.502** heuristic baseline, so it is not wired into the serving path. A gradient-boosted
+alternative was rejected at OOF AUC 0.499 at n=84 — chance.
+
+Image verdicts deliberately **cap at CAUTION**: a single learned-model read never escalates a photo
+to DO_NOT_USE, because that detector still false-highs ~6/25 real images on our own check set.
+
 ## Quick start (this box)
 
 ```bash
