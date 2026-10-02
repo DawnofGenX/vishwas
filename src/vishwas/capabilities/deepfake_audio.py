@@ -11,6 +11,7 @@ variants feeds reliability and adversarial-evasion testing.
 """
 from __future__ import annotations
 
+import logging
 import os
 import statistics
 import subprocess
@@ -27,6 +28,8 @@ from ..media_utils import extract_audio_wav, apply_transform_matrix, probe
 from ..model_adapters import resolve as _resolve_adapter, _call_model as _call_model_compat, _auto_extract, is_usable_model as _is_usable_model
 from .base import CheckResult
 
+log = logging.getLogger(__name__)
+
 
 # 2026-08-26 audio-trustworthy fix: the webhook's docling-python tree cannot load
 # Wav2Vec2Model (transformers-5.15 + accelerate circular-import / lib.GEN_EMAIL),
@@ -42,14 +45,33 @@ _AASIST3_SUBPROC_TIMEOUT_S = 150  # first load ~37s + inference; bounded
 
 def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIST3_SUBPROC_TIMEOUT_S) -> float | None:
     """Score one crop via the .venv-ambient helper. Returns spoof posterior [0,1]
-    or None on any failure (never fabricates)."""
+    or None on any failure (never fabricates).
+
+    A None return downgrades the audio channel to missing_dependency, i.e. real
+    deepfake audio scores LOW — this lane fails OPEN. So every failure mode is
+    logged loudly rather than swallowed: a silently dead interpreter (the
+    .venv-ambient tree is an out-of-tree dependency that can break on its own)
+    must be visible, not inferred from a suspicious absence of signal.
+    """
+    if not os.path.exists(_VENV_AMBIENT_PY):
+        log.warning(
+            "aasist3 helper interpreter missing: %s — audio channel degraded to "
+            "missing_dependency (deepfake audio will NOT be caught). Repair with: "
+            "uv python install 3.11",
+            _VENV_AMBIENT_PY,
+        )
+        return None
     try:
         r = subprocess.run(
             [_VENV_AMBIENT_PY, _AASIST3_HELPER, str(crop), "--device", device or "cpu"],
             capture_output=True, text=True, timeout=timeout_s)
-    except Exception:
+    except Exception as exc:
+        log.warning("aasist3 helper failed to execute (%s: %s) — audio degraded",
+                    type(exc).__name__, exc)
         return None
     if r.returncode != 0:
+        log.warning("aasist3 helper exited %s — audio degraded (stderr: %s)",
+                    r.returncode, (r.stderr or "").strip()[:200])
         return None
     for line in r.stdout.splitlines():
         x = line.strip()
@@ -59,6 +81,7 @@ def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIS
             return float(x)
         except ValueError:
             continue
+    log.warning("aasist3 helper produced no parseable posterior — audio degraded")
     return None  # no parseable posterior line
 
 
