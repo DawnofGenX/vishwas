@@ -105,3 +105,5 @@ See `docs/ARCHITECTURE.md` for the full diagram.
 ## Deployment
 
 Real-world wiring with OpenWA (docker compose, webhook registration, secret management, health checks) is in **`docs/DEPLOYMENT.md`**. Non-technical behaviour guide for users and operators is in **`docs/USER_GUIDE.md`**; adversary-facing design rationale is in **`docs/THREAT_MODEL.md`**; the honest capability inventory and how to enable every gated feature is in **`docs/GAPS_AND_ENABLEMENT.md`**.
+
+More writing on this stack: https://dev.to/dawnofgenx
