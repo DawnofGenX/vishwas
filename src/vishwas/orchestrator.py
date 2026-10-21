@@ -37,7 +37,26 @@ _HARD_BUDGET_MULT = 2.0
 
 
 def _default_heavy_stage_budget() -> float:
-    return float(os.environ.get("VISHWAS_HEAVY_STAGE_BUDGET_S", "30"))
+    """Seconds a single heavy (learned-model) stage may take before the
+    orchestrator stops waiting and returns the job as pending_heavy.
+
+    The default was 30s, which was sized for a host where the learned
+    detectors were NOT installed (so no heavy stage ever ran and the budget
+    was never reached). Once the detectors actually load, 30s is too tight:
+    measured 2026-10-21 on this host, a cold aasist3 load is 7.0s and a
+    cold xlsr-mamba load is 4.7s, and the deepfake_video stage (frame
+    extraction + EFFORT over 8 frames + the 5-variant transform battery)
+    takes ~27s. At 30s the audio and video channels both expired
+    mid-stage and returned `unable_to_verify` with `pending_heavy` — the
+    verdict was never computed.
+
+    120s comfortably covers the measured worst case (a cold load of every
+    learned gate plus the transform battery) while still bounding a stage
+    that has genuinely hung. The per-job envelope (VISHWAS_BUDGET_S, 300s
+    default) remains the outer limit, so a stage can never exceed the job
+    budget; this is the inner per-stage allowance.
+    """
+    return float(os.environ.get("VISHWAS_HEAVY_STAGE_BUDGET_S", "120"))
 
 
 @dataclass(slots=True)

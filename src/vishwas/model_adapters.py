@@ -179,10 +179,46 @@ class Adapter:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _is_safetensors_path(path: str) -> bool:
+    """True when *path* names a safetensors checkpoint (by file suffix).
+
+    Suffix-based, not substring: a path like ``/opt/safetensors.backup/model.pth``
+    is a PICKLE checkpoint that merely lives in a directory named after the
+    format, and routing it to the safetensors reader would break it.
+    """
+    return str(path).lower().endswith(".safetensors")
+
+
 def _default_load(path: str) -> Any:
-    """torch.load with map_location=resolve_device(); returns None on any failure."""
+    """Load a checkpoint; returns None on any failure.
+
+    Dispatch is on the FILE FORMAT, not on a single reader:
+
+    * ``.safetensors`` -> ``safetensors.torch.load_file`` (returns a plain
+      {str: Tensor} state dict). ``torch.load`` CANNOT read this format — it
+      raises ``UnpicklingError`` on the safetensors header magic, and the old
+      implementation swallowed that into a silent ``None``, which downgraded
+      the audio channel to ``missing_dependency`` and made real deepfake audio
+      score LOW (a fail-open on a security verdict path).
+    * anything else -> ``torch.load`` with ``map_location=resolve_device()``
+      (the historical behaviour for ``.pth`` checkpoints).
+
+    Both readers are tried defensively: a missing ``torch``/``safetensors``
+    package, a corrupt file, or any other error returns ``None`` rather than
+    raising — the caller records ``unavailable`` and the honest-degradation
+    contract is preserved.
+    """
     if not path or not os.path.exists(path):
         return None
+    if _is_safetensors_path(path):
+        try:
+            from safetensors.torch import load_file  # type: ignore
+        except Exception:
+            return None
+        try:
+            return load_file(path, device=resolve_device())
+        except Exception:
+            return None
     try:
         import torch  # type: ignore
         return torch.load(path, map_location=resolve_device(), weights_only=False)
@@ -368,7 +404,14 @@ def _sigmoid(x: float) -> float:
 
 
 def _to_float(val: Any) -> float | None:
-    """First element of tensor/list/array -> float; clamp/sigmoid as needed."""
+    """First element of tensor/list/array -> float; clamp/sigmoid as needed.
+
+    Returns None for a value that carries NO information — a NaN or an
+    infinity. A NaN posterior is not evidence of anything, and the old code
+    silently mapped it through the sigmoid to 1.0, i.e. a CONFIDENT FAKE
+    (measured: `_to_float(nan) -> 1.0`). A numerically saturated detector
+    therefore produced prob_deepfake=1.0 with status="ok" and no warning.
+    """
     try:
         if hasattr(val, "item"):  # torch.Tensor scalar
             val = val.item()
@@ -381,6 +424,12 @@ def _to_float(val: Any) -> float | None:
         if isinstance(val, (list, tuple)):
             val = val[0] if val else 0.0
         f = float(val)
+        # FAIL-OPEN FIX (2026-10-21): a non-finite posterior carries no
+        # information. Returning None makes the caller report the check as
+        # failed/unavailable, which is honest; mapping it to 0.0 or 1.0
+        # invents a confident verdict. NaN -> 1.0 was a CONFIDENT FAKE.
+        if not math.isfinite(f):
+            return None
         if f > 1.0 or f < 0.0:
             f = _sigmoid(f)  # out-of-probability-range outputs are treated as logits
         return max(0.0, min(1.0, f))

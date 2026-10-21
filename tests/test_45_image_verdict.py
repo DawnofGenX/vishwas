@@ -26,11 +26,37 @@ def test_clean_real_photo_reads_low():
     assert d.verdict == Verdict.TRUST, d.reasons
 
 
-def test_clean_real_photo_spai_absent_still_trusts_if_others_clean():
-    # SPAI heavy may be unavailable; integrity + freqband clean is enough to trust
+def test_clean_real_photo_spai_absent_does_not_trust():
+    """FAIL-OPEN FIX (2026-10-21): an ABSENT SPAI must NOT authorise TRUST.
+
+    This test previously asserted the opposite ("SPAI heavy may be
+    unavailable; integrity + freqband clean is enough to trust"), which
+    pinned the fail-open: with the strong detector dead, the only remaining
+    guard was the frequency-band heuristic — documented in fusion.py as
+    DEAD NOISE (real 0.463 vs AI 0.399, overlapping — it cannot flag
+    anything). So a DEAD SPAI produced verdict=TRUST and an arbitrary
+    AI-generated image read as genuine.
+
+    A verdict we could not compute must not be reported as a clean one:
+    the honest outcome is CAUTION/UNVERIFIED, not TRUST.
+    """
     d = _decide([
         _ck("image_integrity", {"sha256": "a" * 64}),
         _ck("frequency_band_analysis", {"prob_deepfake": 0.32}),
+    ])
+    assert d.verdict != Verdict.TRUST, (
+        f"a DEAD image detector produced TRUST ({d.reasons}) -- the image "
+        f"channel fails OPEN"
+    )
+
+
+def test_clean_real_photo_with_working_detectors_still_trusts():
+    """The fix must not break the healthy path: when the strong detector
+    actually ran and is low, a clean photo still reads TRUST."""
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.32}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.05}),
     ])
     assert d.verdict == Verdict.TRUST, d.reasons
 
@@ -77,3 +103,38 @@ def test_integrity_fail_never_trusts():
         _ck("image_face_forensics", {"prob_deepfake": 0.10}),
     ])
     assert d.verdict is not Verdict.TRUST, d.reasons
+
+
+def test_flux_ai_spai_zero_nyuad_high_not_low():
+    # THE fix: a flux AI image reads SPAI ~0.0 (the false-clean). NYUAD (second
+    # independent detector) catches it -> must NOT read LOW/trust.
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.38}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.0}),        # SPAI misses
+        _ck("nyuad_image_detector", {"prob_deepfake": 0.98, "source": "nyuad.subprocess(.venv-ambient)"}),
+    ])
+    assert d.verdict is not Verdict.TRUST, d.reasons
+
+
+def test_clean_real_both_low_reads_low():
+    # real photo: SPAI low AND NYUAD low -> still LOW
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.40}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.03}),
+        _ck("nyuad_image_detector", {"prob_deepfake": 0.02, "source": "nyuad.subprocess(.venv-ambient)"}),
+    ])
+    assert d.verdict == Verdict.TRUST, d.reasons
+
+
+def test_nyuad_unavailable_still_trusts_on_spai():
+    # when the second detector is unavailable (no .venv-ambient), a clean SPAI read
+    # still trusts (don't hard-block the whole channel on a missing detector)
+    d = _decide([
+        _ck("image_integrity", {"sha256": "a" * 64}),
+        _ck("frequency_band_analysis", {"prob_deepfake": 0.38}),
+        _ck("image_face_forensics", {"prob_deepfake": 0.10}),
+        _ck("nyuad_image_detector", {}, status="unavailable"),
+    ])
+    assert d.verdict == Verdict.TRUST, d.reasons

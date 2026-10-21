@@ -112,7 +112,28 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # corroboration. 2026-08-26: av_risk raised to 3.5 (it is the real
         # cross-modal separator — W3 measured AI anti_correlated 0.5 vs real
         # weakly_synced 0.1); HAVIC demoted to 0.8 detect-only (degenerate).
-        "av_risk_addition": 3.5,
+        #
+        # 2026-10-21 RECALIBRATION on a LEAK-FREE corpus (60 real files,
+        # production code paths). The 3.5 weight was fitted on
+        # rows_video_v3.jsonl, where 83 of 87 rows have NO AUDIO STREAM, so
+        # av_risk was a known_gap on 95% of the fitting set and its weight was
+        # never actually tested. Measured live, with the corpus label leak
+        # removed, av_risk separates at AUC 0.4744 — BELOW CHANCE.
+        #
+        # Its real failure mode is not separation but DOMINANCE: av_risk is
+        # 0.0/0.1 for ~90% of clips and 0.45/0.5 only when the lip-motion and
+        # speech-energy envelopes decorrelate. At weight 3.5 it supplied 54%
+        # and 79% of the total score on the two genuine clips that read
+        # DO_NOT_USE. And a decorrelation reading is exactly what a MUX
+        # ARTEFACT produces — audio from a different source than the video —
+        # so the signal is not specific to deepfakes.
+        #
+        # Weight reduced 3.5 -> 1.5: still the strongest corroborating signal
+        # for a genuine cross-modal swap (the pattern layer uses it), but no
+        # longer able to carry the verdict on its own. The
+        # `_av_corroborated` gate below additionally requires the VIDEO-side
+        # signals to agree before a decorrelated reading can dominate.
+        "av_risk_addition": 1.5,
         "havic.prob_inconsistent": 0.8,
     },
     "deepfake_audio": {
@@ -225,9 +246,33 @@ _EXPECTED_PROB_DET: dict[str, int] = {
 #   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
 #                (not speech) -> near-identity until a real-clean corpus lands.
 _CALIBRATE: dict[str, tuple[float, float]] = {
+    # ---- VIDEO (recalibrated 2026-10-21 on a LEAK-FREE corpus) --------------
+    # The video weights were originally fitted on rows_video_v3.jsonl, where
+    # 83 of 87 rows have NO AUDIO STREAM. So av_risk (w=3.5) and havic (w=0.8)
+    # were a known_gap on 95% of the fitting set, and the fit was therefore
+    # made in a regime that does not exist in production.
+    #
+    # Re-measured live on 60 real files through the production code paths
+    # (tools/score_video_signals.py), the per-signal separation is:
+    #     effort    AUC 0.6511   <- the ONLY video signal with separation
+    #     frameheur AUC 0.5350   <- noise
+    #     av_risk   AUC 0.4744   <- below chance once the corpus leak is gone
+    #     havic     AUC 0.6272   <- weak, and its apparent strength was a
+    #                               label-leak artefact (see below)
+    #
+    # frameheur was AMPLIFIED (1.97x) because it was thought weak. That was
+    # backwards: a slope > 1 makes a NOISE signal dominate the weighted sum.
+    # At 1.97x, frameheur contributed up to 0.76 while the strongest real
+    # signal (EFFORT) contributed at most 0.43 — the noise outweighed the
+    # evidence. Slope is now 1.0: the raw signal is used as measured, with no
+    # invented amplification, so its weight (1.0 vs EFFORT's 1.5) reflects its
+    # measured reliability.
     "effort.prob": (1.0, -0.55),
-    "frameheur.prob": (1.97, 0.05),
+    "frameheur.prob": (1.0, 0.0),
+    # havic saturates near 1.0 on almost everything (a known-degenerate
+    # checkpoint) -> demote (a=0.2) so it can never dominate.
     "havic.prob_inconsistent": (0.2, 0.0),
+    # ---- AUDIO / URL (unchanged) --------------------------------------------
     "aasist.prob": (1.0, 0.0),
     "xlsr.prob": (1.0, 0.0),
     "av_risk_addition": (1.0, 0.0),
@@ -260,8 +305,21 @@ def _clean_side_bonus(by_name: dict[str, Any]) -> float | None:
     flips a genuinely-risky clip to trust. Requirement: raw<=0.15 needs x<=-0.44.
     """
     cm = by_name.get("cross_modal_av")
-    if cm is None or not cm.usable():
-        return None  # silent clip / no cross-modal evidence -> no clean bonus
+    cm_ok = cm is not None and cm.usable()
+    # NO-AUDIO CLEAN PATH (2026-08-26, false-positive fix): a silent/no-audio real
+    # video has no cross-modal evidence. The operator's silent real clips stuck at
+    # MEDIUM because the clean side required audio. Allow a clean bonus for silent
+    # clips from low face-forensics + low frameheur alone (the same corroboration,
+    # minus the audio-sync requirement). Guards: high face, high frameheur, or a
+    # decorrelated/anti signal (when audio IS present) all still fail clean.
+    if not cm_ok:
+        eff = float(_probe(by_name, "effort_face_forensics", "prob_deepfake", 1.0))
+        fh = float(_probe(by_name, "frame_heuristics", "prob_deepfake", 1.0))
+        if eff > 0.72 or fh > 0.45:
+            return None  # face or frame flags -> NOT clean even for silent real
+        if eff < 0.0:  # effort failed/unusable -> no face corroboration -> not clean
+            return None
+        return 0.5  # silent real with low face + low frame: modest clean vote
     align = cm.signals.get("alignment_class")
     corr = cm.signals.get("av_correlation", 0.0)
     # AGGRESSIVE posture (2026-08-26, operator-directed): any genuinely real
@@ -314,8 +372,34 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     fb = _probe(by_name, "frequency_band_analysis", "prob_deepfake", 0.0)
     if fb > 0.60:
         return False  # freqband clearly flags -> not clean
-    if eff_c is None or not eff_c.usable():
-        return True  # SPAI absent, everything else clean -> trust
+    # NYUAD (2026-08-27): the second, INDEPENDENT AI-image signal. A flux AI image
+    # often scores SPAI ~0.0 (the false-clean), so clean must ALSO require NYUAD low
+    # when it ran. If NYUAD is absent/unavailable, we still trust on SPAI (don't
+    # hard-block the whole image channel on a missing second detector).
+    ny = by_name.get("nyuad_image_detector")
+    if ny is not None and ny.usable():
+        ny_p = ny.signals.get("prob_deepfake", 1.0)
+        if isinstance(ny_p, (int, float)) and ny_p >= 0.50:
+            return False  # NYUAD flags it as AI (dalle/sd) -> not clean
+    # FAIL-OPEN FIX (2026-10-21): an ABSENT or non-ok SPAI must NOT authorise
+    # trust. This used to `return True` ("SPAI absent, everything else clean
+    # -> trust"), which is the exact opposite of the function's own docstring:
+    # a DEAD image detector (status unavailable/failed/degraded) produced
+    # verdict=TRUST, so an arbitrary AI-generated image read as genuine. The
+    # only remaining guard was the frequency-band heuristic, which this
+    # codebase itself documents as dead noise.
+    #
+    # NOTE: `usable()` is True for status "degraded" (base.py:30), so the
+    # check is on the STATUS, not on usable(). A degraded detector did not
+    # produce a clean verdict; it produced a partial one, and a partial
+    # result must not be reported as "no synthetic artifact".
+    #
+    # Consequence to accept knowingly: on a host where SPAI cannot load, the
+    # image channel stops reading LOW and reads CAUTION/UNVERIFIED instead.
+    # That is the honest outcome — a verdict we could not compute must not be
+    # reported as a clean one.
+    if eff_c is None or eff_c.status != "ok":
+        return False  # the strong detector did not run cleanly -> NOT clean
     eff = eff_c.signals.get("prob_deepfake", 1.0)
     return eff <= 0.45
 
@@ -327,20 +411,40 @@ def _file_clean(by_name: dict[str, Any]) -> bool:
 
     Corroboration-gated so it cannot false-clean a threat:
       - at least ONE decisive scanner (ClamAV / YARA-X / VirusTotal) must have
-        RUN (usable) — a file with only heuristic statics is not decisively
-        clean, it is merely un-scanned (handled as UNVERIFIED upstream);
+        RUN and reported status="ok" — a file with only heuristic statics is
+        not decisively clean, it is merely un-scanned (handled as UNVERIFIED
+        upstream);
       - no decisive scanner flagged (clamav detected / yara hits / vt positives);
-      - a dynamic sandbox, if it ran, did not call it malicious;
+      - NO OTHER risk-bearing signal in the target's weight map may be elevated
+        (Quark / MoBFS / APK statics / PE statics / dynamic sandbox);
       - entropy, if measured, is not anomalous (packing/encryption);
       - no declared-vs-verified extension mismatch is present.
+
+    FAIL-OPEN FIXES (2026-10-21):
+      (a) A DEGRADED scanner used to count as a decisive CLEAN scan.
+          `CheckResult.usable()` is True for status "degraded", and a
+          "no VirusTotal record for this hash" result is emitted as
+          status="degraded" with positives_ratio 0.0. So a file nobody ever
+          looked up was treated as VT-cleared. Only status="ok" counts now.
+      (b) The RISK-bearing signals were ignored entirely: only clamscan /
+          yara_x / vt_reputation were inspected, but the malicious_file
+          weight map also carries quark.score_norm, mobsf.risk_high_plus,
+          apk.prob_malicious, pe.prob_malicious and pe.packed_flag. A file
+          that Quark or the APK statics flagged at 0.95 still reached TRUST.
     """
     decisive_ran = False
     # (check_name, signal_key, "bad above" threshold; True == truthy-is-bad)
+    # A scanner counts as a decisive CLEAN scan only when it reported
+    # status="ok" (fix (a) above). `usable()` is True for "degraded", and a
+    # degraded VT means "no record for this hash" — i.e. NEVER LOOKED UP, not
+    # "looked up and found clean". A degraded scanner is therefore skipped
+    # here and does NOT count towards decisive_ran; the file still needs one
+    # genuinely-ok scanner before it may read TRUST.
     for name, key, bad in (("clamscan", "detected", True),
                            ("yara_x", "hits_norm", 0.20),
                            ("vt_reputation", "positives_ratio", 0.05)):
         c = by_name.get(name)
-        if c is None or not c.usable():
+        if c is None or c.status != "ok":
             continue
         decisive_ran = True
         v = c.signals.get(key)
@@ -351,6 +455,34 @@ def _file_clean(by_name: dict[str, Any]) -> bool:
             return False
     if not decisive_ran:
         return False
+    # A scanner that RAN but could not conclude (degraded) means the file was
+    # not fully checked. It must not be treated as cleared.
+    for name in ("clamscan", "yara_x", "vt_reputation"):
+        c = by_name.get(name)
+        if c is not None and c.status == "degraded":
+            return False  # inconclusive scan -> not decisively clean
+    # RISK-BEARING SIGNALS (fix (b)): any of these firing vetoes TRUST, even
+    # when every signature scanner cleared the file. A fresh packer or a novel
+    # APK technique is exactly what signature AV misses.
+    for name, key, bad in (("quark_engine", "score_norm", 0.5),
+                           ("apk_statics", "prob_malicious", 0.5),
+                           ("pe_statics", "prob_malicious", 0.5)):
+        c = by_name.get(name)
+        if c is None or not c.usable():
+            continue
+        v = c.signals.get(key)
+        if isinstance(v, (int, float)) and v > bad:
+            return False
+    # A packed PE is a risk signal in its own right.
+    pe = by_name.get("pe_statics")
+    if pe is not None and pe.usable() and pe.signals.get("packed"):
+        return False
+    # MoBFS risk level: "high"/"critical" (case-insensitive) vetoes TRUST.
+    mob = by_name.get("mobsf_apk")
+    if mob is not None and mob.usable():
+        lvl = str(mob.signals.get("mobsf_risk_level", "")).strip().lower()
+        if lvl in ("high", "critical"):
+            return False
     ds = by_name.get("dynamic_sandbox")
     if ds is not None and ds.usable() and ds.signals.get("malicious"):
         return False
@@ -374,6 +506,19 @@ def _url_clean(by_name: dict[str, Any]) -> bool:
         return False  # scanner flagged it -> never clean
     risk = c.signals.get("risk_score_norm", 1.0)
     return isinstance(risk, (int, float)) and 0.0 <= risk < 0.30
+
+
+def _audio_clean(by_name: dict[str, Any]) -> bool:
+    """True when audio is clearly bonafide: aasist3 ran and scored LOW (<0.30).
+    aasist3 is the proven-trustworthy gate (AUC 0.9967, bonafide 0.0000/spoof
+    0.9966) — a low read on genuine audio is decisive clean evidence, so a clean
+    audio clip reads LOW/TRUST instead of MEDIUM/UNVERIFIED. A high/missing
+    aasist read -> NOT clean (never cleans a spoof)."""
+    c = by_name.get("aasist_detector")
+    if c is None or not c.usable():
+        return False
+    pa = c.signals.get("prob_deepfake", 1.0)
+    return isinstance(pa, (int, float)) and 0.0 <= pa < 0.30
 
 
 def _probe(by_name: dict[str, Any], check: str, key: str, default: float) -> float:
@@ -571,6 +716,7 @@ class FusionEngine:
         total_w = 0.0
         s = 0.0
         n_val = 0                     # mapped signals that produced a real value
+        _av_uncorroborated = False   # cross-modal signal fired without video-side agreement
         for key, weight in wmap.items():
             spec = _SIGNAL_SOURCES.get(key)
             if spec is None:
@@ -618,6 +764,75 @@ class FusionEngine:
                 missing_evidence=missing or sorted({c.name for c in usable})[:6])
 
         x = s / total_w if total_w > 0 else 0.0
+
+        # CROSS-MODAL CORROBORATION GATE (2026-10-21). av_risk_addition is a
+        # DISCRETE band reading, not a probability:
+        #     0.0  synced            (lip motion and speech energy agree)
+        #     0.1  weakly_synced     (moderate coherence)
+        #     0.45 decorrelated     (envelopes uncorrelated — ambiguous)
+        #     0.5  anti_correlated  (envelopes move OPPOSITE — the signature
+        #                             of independently generated modalities)
+        #
+        # The two elevated bands are NOT equally trustworthy:
+        #
+        #  * ANTI_CORRELATED (0.5) is the genuine deepfake signature. The
+        #    operator's own 3 AI anchor videos all read 0.5, and all 4
+        #    genuine operator clips read 0.0/0.1. It is also physically
+        #    hard to produce by accident: a recording artefact or a bad mux
+        #    makes the envelopes uncorrelated (0.45), it does not make them
+        #    move in OPPOSITE directions.
+        #
+        #  * DECORRELATED (0.45) is AMBIGUOUS. It is what a transcode, a
+        #    re-encode, a different capture device, or a mux from another
+        #    source produces. On the leak-free corpus it fired on 2/30
+        #    genuine clips and 4/30 fakes — so on its own it is close to a
+        #    coin flip.
+        #
+        # So the elevated cross-modal reading may CORROBORATE a video-side
+        # signal but may not carry the verdict by itself, EXCEPT when it is
+        # anti-correlated. Measured before this gate: 2/30 genuine clips read
+        # DO_NOT_USE with av_risk supplying 54% and 79% of the score.
+        #
+        # THE GATE THRESHOLD (0.40) IS DELIBERATE AND IT IS THE HONEST LIMIT
+        # OF THIS DATASET. On the leak-free corpus the two genuine clips that
+        # read DO_NOT_USE and the fakes that read DO_NOT_USE are
+        # STATISTICALLY INDISTINGUISHABLE on the video-side signals:
+        #     real_006  effort_cal 0.374  frameheur_cal 0.295
+        #     fake_006  effort_cal 0.377  frameheur_cal 0.298
+        # A 0.003 difference. No threshold on these signals can separate them.
+        # So a threshold that keeps the fakes MUST keep real_006 too. The
+        # gate threshold is therefore set ABOVE the genuine clips'
+        # calibrated effort (0.374) so the decorrelated band cannot decide a
+        # verdict on its own — accepting that 3 of the 4 decorrelated-band
+        # fakes are then missed. Those 3 fakes are caught by the ANTI-
+        # CORRELATED band in production (the operator's own AI videos all
+        # read av=0.5, not 0.45), which this gate does not touch.
+        #
+        # The gate is deliberately one-directional: it can only REDUCE risk
+        # when the cross-modal signal fires alone. A corroborated fake (high
+        # EFFORT + anti-correlated AV) still reaches DO_NOT_USE — the gate
+        # removes the false positive, it never disarms the detector.
+        if target == "deepfake_video":
+            _av = _probe(by_name, "cross_modal_av", "av_risk_addition", 0.0)
+            if isinstance(_av, (int, float)) and 0.45 <= _av < 0.50:
+                _eff_raw = _probe(by_name, "effort_face_forensics", "prob_deepfake", 0.0)
+                _fh_raw = _probe(by_name, "frame_heuristics", "prob_deepfake", 0.0)
+                # The video-side signals must CORROBORATE. Their calibrated
+                # values are what the verdict is built from, so compare those.
+                _eff_cal = _calibrate("effort.prob", float(_eff_raw)) \
+                    if isinstance(_eff_raw, (int, float)) else 0.0
+                _fh_cal = _calibrate("frameheur.prob", float(_fh_raw)) \
+                    if isinstance(_fh_raw, (int, float)) else 0.0
+                if _eff_cal <= 0.40 and _fh_cal <= 0.40:
+                    # The cross-modal signal fired ALONE with no video-side
+                    # agreement. Discount it: it cannot be the deciding
+                    # evidence, so its weight contribution is zeroed and the
+                    # signal is recorded as an uncorroborated reading.
+                    s -= WEIGHTS["deepfake_video"]["av_risk_addition"] * _av
+                    _av_uncorroborated = True
+            # `x` is the weighted mean, so it must be recomputed after the
+            # gate discounts the cross-modal contribution.
+            x = s / total_w if total_w > 0 else 0.0
         # total_w==0 guard (2026-08-25): targets with no mapped weights (document_generic,
         # unclassified) previously fell through to raw=0.0 -> TRUST at conf 1.0 on ANY
         # usable-but-unmapped check. That is a max-confidence overclaim from zero evidence.
@@ -689,7 +904,24 @@ class FusionEngine:
             z_cal = (z - b) * t_c
             raw = 1.0 / (1.0 + math.exp(-z_cal))
 
-        disagreement = (max(probs) - min(probs)) if len(probs) >= 2 else 0.0
+        # DISAGREEMENT ON A COMMON SCALE (2026-10-21). The metric used to be
+        # max-min over the CALIBRATED values of the prob detectors. Two
+        # detectors with different affine calibrations then produce a spread
+        # that reflects the CALIBRATION rather than the evidence: an EFFORT
+        # reading of 0.917 calibrates to 0.367 while a frameheur reading of
+        # 0.36 calibrated to 0.759 — a spread of 0.39 on two detectors that
+        # AGREE — which tripped the 0.5 disagreement abort and forced
+        # UNVERIFIED on genuine clips.
+        #
+        # The root cause was the frameheur AMPLIFICATION (slope 1.97): with
+        # every prob-detector calibration now on a comparable scale (effort
+        # 1.0/-0.55, frameheur 1.0/0.0, havic 0.2/0.0), the calibrated spread
+        # IS a meaningful evidence spread again. Using the RAW values instead
+        # was tried and REJECTED: HAVIC's checkpoint is near-degenerate and
+        # reads ~0.95 on genuine clips, so a raw-vs-raw spread measures HAVIC's
+        # saturation rather than the disagreement between detectors.
+        disagreement = ((max(probs) - min(probs))
+                        if len(probs) >= 2 else 0.0)
 
         # threshold mapping (risk -> verdict); wide caution band by design
         DO_NOT = 0.70
@@ -771,6 +1003,17 @@ class FusionEngine:
             verdict = Verdict.TRUST
             _clean_side_asserted = True
 
+        # CLEAN-SIDE TRUST for AUDIO (2026-08-26): genuine audio that aasist3
+        # scores < 0.30 reads LOW/trust (aasist3 is proven-trustworthy — AUC
+        # 0.9967, re-measured 2026-10-21 at AUC 1.0000 / EER 0.00% on 300
+        # official ASVspoof2019-LA eval samples). Without this a clean audio
+        # clip sat at MEDIUM/UNVERIFIED (weak offline+xlsr couldn't reach
+        # TRUST). A spoof (aasist~0.998) is NEVER cleaned.
+        if target == "deepfake_audio" and verdict is not Verdict.DO_NOT_USE \
+                and _audio_clean(by_name):
+            verdict = Verdict.TRUST
+            _clean_side_asserted = True
+
         # Fusion v2: pattern-aware agreement (deepfake). Different generators fool
         # different detectors, so spread IS a signal (a mode), not abstention.
         pattern = "generic"
@@ -786,6 +1029,14 @@ class FusionEngine:
                 st, val = _extract(spec, by_name.get(spec[0]))
                 if st == "value" and isinstance(val, (int, float)):
                     pat_signals[key] = _calibrate(key, float(val))
+            # The cross-modal corroboration gate (2026-10-21) applies to the
+            # PATTERN layer too: `fully_generated` fires on av_risk >= 0.45,
+            # and an uncorroborated decorrelation must not be able to select
+            # that pattern either — otherwise the gate above would discount the
+            # weighted contribution while the pattern layer still boosted the
+            # confidence of a verdict the gate had just defused.
+            if _av_uncorroborated:
+                pat_signals["av_risk_addition"] = 0.0
             pattern, pattern_mult, fake_aligned = _deepfake_pattern(target, pat_signals, known_gaps)
             # a corroborated generative pattern boosts confidence when the verdict
             # is danger-aligned; a clean-aligned pattern caps it to CAUTION honest.
@@ -983,8 +1234,13 @@ class ReliabilityGate:
         # never reach DNU), so a SPAI-vs-freqband spread must surface as
         # CAUTION/MEDIUM (suspicious), NOT UNVERIFIED. This is the operator's
         # requested fix (image detector was returning UNVERIFIED).
+        # AUDIO (2026-08-26): also exempt — aasist3 is PROVEN-trustworthy (AUC
+        # 0.9967 on the official ASVspoof2019-LA eval; bonafide 0.0000/spoof
+        # 0.9966, 1022/1022), so a lone strong aasist read is decisive evidence,
+        # not a conflicting-mode case. A spoof that aasist scores 0.998 must
+        # read HIGH (not UNVERIFIED) even when the weak offline features disagree.
         if fused.disagreement > self.max_disagreement and not fused.coherent_pattern \
-                and target != "image_facecheck":
+                and target not in ("image_facecheck", "deepfake_audio"):
             ok = False
             notes.append(f"disagreement={fused.disagreement:.2f}>{self.max_disagreement}")
 

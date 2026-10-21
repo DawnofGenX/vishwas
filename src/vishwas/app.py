@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -29,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from vishwas.capabilities import default_capabilities
 from vishwas.channels import (MessageProcessor, OpenWAClient, parse_openwa_webhook,
-                               verify_openwa_signature)
+                               safe_jid_dirname, verify_openwa_signature)
 from vishwas.events import InputType
 from vishwas.fusion import FusionEngine, ReliabilityGate
 from vishwas.report import ReportBuilder
@@ -317,30 +319,43 @@ def _looks_like_url(s: str) -> bool:
 _PROCESS_START_MONO = time.monotonic()
 
 
-def health_snapshot(processor, deps) -> dict:
-    """Build the rich GET /health payload (Task 2.3).
+def health_snapshot(processor, deps, detailed: bool = True) -> dict:
+    """Build the GET /health payload (Task 2.3).
 
-    Schema:
+    Schema (detailed, served to loopback / a valid VISHWAS_HEALTH_TOKEN):
       status           "ok" while the process can serve at all
       uptime_s         int seconds since process start (>= 0)
       jobs_total       jobs started through MessageProcessor.process()
       jobs_ok          jobs whose orchestrator run returned an outcome
       jobs_failed      jobs whose orchestrator run raised
       quarantines_open job dirs still present under the quarantine root
+      device           resolved inference device
       deps             {"available": [...], "count": N} — detect_available_deps()
       deps_available   flat sorted list (backward-compat pre-2.3 field)
+
+    F7 fix (2026-10-21): the capability inventory, quarantine occupancy and
+    device are deployment fingerprints. When `detailed` is False the endpoint
+    returns ONLY a minimal liveness payload (status + uptime_s) so an
+    unauthenticated NETWORK client cannot fingerprint the deployment. `detailed`
+    defaults to True to keep existing callers/tests (and the local health probe,
+    which runs from loopback) backward-compatible.
 
     NOTE: jobs_* counters are in-memory and RESET TO ZERO on restart;
     durable per-job evidence lives in outcomes.jsonl.
     """
-    from vishwas.quarantine import count_open_quarantines  # lazy: env-gated paths
     snap = processor.counters.snapshot() if processor is not None \
         else {"jobs_total": 0, "jobs_ok": 0, "jobs_failed": 0}
-    dep_list = sorted(deps) if deps else []
-    from vishwas.device import resolve_device  # lazy: torch import cost
-    return {
+    base = {
         "status": "ok",
         "uptime_s": max(0, int(time.monotonic() - _PROCESS_START_MONO)),
+    }
+    if not detailed:
+        return base
+    dep_list = sorted(deps) if deps else []
+    from vishwas.quarantine import count_open_quarantines  # lazy: env-gated paths
+    from vishwas.device import resolve_device  # lazy: torch import cost
+    return {
+        **base,
         **snap,
         "quarantines_open": count_open_quarantines(),
         "device": resolve_device(),
@@ -350,13 +365,36 @@ def health_snapshot(processor, deps) -> dict:
     }
 
 
+def _is_loopback(addr: str) -> bool:
+    """True when a client address is the local host (loopback)."""
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except (ValueError, TypeError):
+        return False
+
+
 class WebhookHandler(BaseHTTPRequestHandler):
     processor: "MessageProcessor"   # injected by factory
 
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/health"):
+            # F7 fix: serve the full ops detail (capability inventory, quarantine
+            # occupancy, device) only to the local host or a client presenting a
+            # valid VISHWAS_HEALTH_TOKEN; network clients get liveness only.
+            # (client_address is always present on a real socket; the socket-less
+            # test harness falls back to the documented rich payload.)
+            addr = getattr(self, "client_address", None)
+            local = _is_loopback(addr[0]) if addr else True
+            headers = getattr(self, "headers", None)
+            provided = headers.get("X-Vishwas-Health-Token", "") if headers is not None else ""
+            token = os.environ.get("VISHWAS_HEALTH_TOKEN", "")
+            detailed = local or (
+                bool(token) and
+                hmac.compare_digest(provided.encode("utf-8", "ignore"),
+                                    token.encode("utf-8", "ignore")))
             body = json.dumps(health_snapshot(getattr(self, "processor", None),
-                                              getattr(self, "_deps", []))).encode()
+                                              getattr(self, "_deps", []),
+                                              detailed=detailed)).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -371,8 +409,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         proc: MessageProcessor = self.processor
         secret = getattr(proc.openwa, "webhook_secret", "") if proc.openwa else \
             os.environ.get("OPENWA_WEBHOOK_SECRET", "")
-        ok_sig = verify_openwa_signature(raw, self.headers.get("X-OpenWA-Signature"), secret) \
-            if secret else True
+        # F1 fix: ALWAYS verify — verify_openwa_signature fails closed (rejects)
+        # when no secret is configured. The old `... if secret else True` short-
+        # circuit let an unsigned POST through the whole pipeline when the secret
+        # was unset while the server listened on 0.0.0.0.
+        ok_sig = verify_openwa_signature(raw, self.headers.get("X-OpenWA-Signature"), secret)
         try:
             payload = json.loads(raw.decode(errors="ignore"))
         except json.JSONDecodeError:
@@ -382,22 +423,37 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self._reply(404, {"error": "not found"})
             return
         if not ok_sig:
-            log.warning("openwa webhook signature mismatch; rejecting")
+            log.warning("openwa webhook: rejecting — %s",
+                        "OPENWA_WEBHOOK_SECRET unset (fail-closed)"
+                        if not secret else "signature mismatch")
             self._reply(401, {"error": "signature mismatch"})
             return
         msg = parse_openwa_webhook(payload)
         if msg is None:
             self._reply(200, {"ignored": True})
             return
-        jid = msg.session_key
-        # consumer-side idempotency: OpenWA delivery is at-least-once
         client = proc.openwa
-        if client is not None and client._seen(f"{payload.get('idempotencyKey') or msg.id}"):
+        # F3: replay protection — reject a stale envelope (timestamp-age window)
+        # and an already-seen delivery id BEFORE the pipeline runs (so a captured
+        # signed request cannot re-trigger VT/ffmpeg/LLM + re-send the reply).
+        # The seen-set is durable, so a process restart does not clear it.
+        guard = proc.replay_guard
+        dedupe_key = str(payload.get("deliveryId")
+                         or payload.get("idempotencyKey") or msg.id)
+        if guard.is_stale(payload):
+            log.warning("openwa webhook: envelope older than %ds; rejecting as stale replay",
+                        guard.max_age_s)
+            self._reply(200, {"ignored": "stale"})
+            return
+        if guard.is_replay(dedupe_key):
             self._reply(200, {"ignored": "duplicate"})
             return
+        jid = msg.session_key
         reply_text = ""
         try:
-            workdir = proc.workdir / jid.replace("=", "").replace("@", "-")[:32]
+            # F2: the JID is untrusted input (data.from); safe_jid_dirname() makes
+            # it a single, escaped path component so the workdir can't escape.
+            workdir = proc.workdir / safe_jid_dirname(jid)
             workdir.mkdir(parents=True, exist_ok=True)
             md = msg.as_msg()
             # materialize media: inline base64 (<=1MiB gateway cap) or marker-fetch via API
@@ -450,6 +506,13 @@ def main_webhook(argv: list[str]) -> int:
     logging.basicConfig(level=os.environ.get("VISHWAS_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     deps = detect_available_deps()
+    # F1: make the fail-closed posture explicit at startup. The webhook binds
+    # 0.0.0.0 by default; without a secret every inbound POST is now rejected,
+    # so an operator who forgot to set the secret gets a loud, actionable log.
+    if not os.environ.get("OPENWA_WEBHOOK_SECRET", ""):
+        log.warning("vishwas webhook: OPENWA_WEBHOOK_SECRET is NOT set — every "
+                    "inbound POST /webhook/inbound will be REJECTED (fail-closed). "
+                    "Set the secret (deploy/openwa-reply.env) to accept gateway webhooks.")
     openwa = OpenWAClient(base_url=args.openwa_url) if args.openwa_url else None
     orch = build_orchestrator(deps)
     # P10 fix: do not force a root-only workdir here. Omitting `workdir` lets

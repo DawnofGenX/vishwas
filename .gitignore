@@ -21,3 +21,14 @@ output/renders/
 # vendored Spectra-AASIST3 base-encoder weights stay OUT of git (1.27GB); the
 # arch reads them from /opt/verisafe/models/aasist3/wav2vec2-xls-r-300m/
 src/vishwas/model_archs/_spectra/wav2vec2-xls-r-300m/*.bin
+
+# Secrets and local credentials (the tracked .pem under
+# .delegation/fixtures/ is a public test certificate, not a key)
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+.pypirc
+.netrc
+credentials.json
