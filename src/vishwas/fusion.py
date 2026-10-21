@@ -336,8 +336,25 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
         ny_p = ny.signals.get("prob_deepfake", 1.0)
         if isinstance(ny_p, (int, float)) and ny_p >= 0.50:
             return False  # NYUAD flags it as AI (dalle/sd) -> not clean
-    if eff_c is None or not eff_c.usable():
-        return True  # SPAI absent, everything else clean -> trust
+    # FAIL-OPEN FIX (2026-10-21): an ABSENT or non-ok SPAI must NOT authorise
+    # trust. This used to `return True` ("SPAI absent, everything else clean
+    # -> trust"), which is the exact opposite of the function's own docstring:
+    # a DEAD image detector (status unavailable/failed/degraded) produced
+    # verdict=TRUST, so an arbitrary AI-generated image read as genuine. The
+    # only remaining guard was the frequency-band heuristic, which this
+    # codebase itself documents as dead noise.
+    #
+    # NOTE: `usable()` is True for status "degraded" (base.py:30), so the
+    # check is on the STATUS, not on usable(). A degraded detector did not
+    # produce a clean verdict; it produced a partial one, and a partial
+    # result must not be reported as "no synthetic artifact".
+    #
+    # Consequence to accept knowingly: on a host where SPAI cannot load, the
+    # image channel stops reading LOW and reads CAUTION/UNVERIFIED instead.
+    # That is the honest outcome — a verdict we could not compute must not be
+    # reported as a clean one.
+    if eff_c is None or eff_c.status != "ok":
+        return False  # the strong detector did not run cleanly -> NOT clean
     eff = eff_c.signals.get("prob_deepfake", 1.0)
     return eff <= 0.45
 
@@ -349,20 +366,40 @@ def _file_clean(by_name: dict[str, Any]) -> bool:
 
     Corroboration-gated so it cannot false-clean a threat:
       - at least ONE decisive scanner (ClamAV / YARA-X / VirusTotal) must have
-        RUN (usable) — a file with only heuristic statics is not decisively
-        clean, it is merely un-scanned (handled as UNVERIFIED upstream);
+        RUN and reported status="ok" — a file with only heuristic statics is
+        not decisively clean, it is merely un-scanned (handled as UNVERIFIED
+        upstream);
       - no decisive scanner flagged (clamav detected / yara hits / vt positives);
-      - a dynamic sandbox, if it ran, did not call it malicious;
+      - NO OTHER risk-bearing signal in the target's weight map may be elevated
+        (Quark / MoBFS / APK statics / PE statics / dynamic sandbox);
       - entropy, if measured, is not anomalous (packing/encryption);
       - no declared-vs-verified extension mismatch is present.
+
+    FAIL-OPEN FIXES (2026-10-21):
+      (a) A DEGRADED scanner used to count as a decisive CLEAN scan.
+          `CheckResult.usable()` is True for status "degraded", and a
+          "no VirusTotal record for this hash" result is emitted as
+          status="degraded" with positives_ratio 0.0. So a file nobody ever
+          looked up was treated as VT-cleared. Only status="ok" counts now.
+      (b) The RISK-bearing signals were ignored entirely: only clamscan /
+          yara_x / vt_reputation were inspected, but the malicious_file
+          weight map also carries quark.score_norm, mobsf.risk_high_plus,
+          apk.prob_malicious, pe.prob_malicious and pe.packed_flag. A file
+          that Quark or the APK statics flagged at 0.95 still reached TRUST.
     """
     decisive_ran = False
     # (check_name, signal_key, "bad above" threshold; True == truthy-is-bad)
+    # A scanner counts as a decisive CLEAN scan only when it reported
+    # status="ok" (fix (a) above). `usable()` is True for "degraded", and a
+    # degraded VT means "no record for this hash" — i.e. NEVER LOOKED UP, not
+    # "looked up and found clean". A degraded scanner is therefore skipped
+    # here and does NOT count towards decisive_ran; the file still needs one
+    # genuinely-ok scanner before it may read TRUST.
     for name, key, bad in (("clamscan", "detected", True),
                            ("yara_x", "hits_norm", 0.20),
                            ("vt_reputation", "positives_ratio", 0.05)):
         c = by_name.get(name)
-        if c is None or not c.usable():
+        if c is None or c.status != "ok":
             continue
         decisive_ran = True
         v = c.signals.get(key)
@@ -373,6 +410,34 @@ def _file_clean(by_name: dict[str, Any]) -> bool:
             return False
     if not decisive_ran:
         return False
+    # A scanner that RAN but could not conclude (degraded) means the file was
+    # not fully checked. It must not be treated as cleared.
+    for name in ("clamscan", "yara_x", "vt_reputation"):
+        c = by_name.get(name)
+        if c is not None and c.status == "degraded":
+            return False  # inconclusive scan -> not decisively clean
+    # RISK-BEARING SIGNALS (fix (b)): any of these firing vetoes TRUST, even
+    # when every signature scanner cleared the file. A fresh packer or a novel
+    # APK technique is exactly what signature AV misses.
+    for name, key, bad in (("quark_engine", "score_norm", 0.5),
+                           ("apk_statics", "prob_malicious", 0.5),
+                           ("pe_statics", "prob_malicious", 0.5)):
+        c = by_name.get(name)
+        if c is None or not c.usable():
+            continue
+        v = c.signals.get(key)
+        if isinstance(v, (int, float)) and v > bad:
+            return False
+    # A packed PE is a risk signal in its own right.
+    pe = by_name.get("pe_statics")
+    if pe is not None and pe.usable() and pe.signals.get("packed"):
+        return False
+    # MoBFS risk level: "high"/"critical" (case-insensitive) vetoes TRUST.
+    mob = by_name.get("mobsf_apk")
+    if mob is not None and mob.usable():
+        lvl = str(mob.signals.get("mobsf_risk_level", "")).strip().lower()
+        if lvl in ("high", "critical"):
+            return False
     ds = by_name.get("dynamic_sandbox")
     if ds is not None and ds.usable() and ds.signals.get("malicious"):
         return False

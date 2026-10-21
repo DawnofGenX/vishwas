@@ -404,7 +404,14 @@ def _sigmoid(x: float) -> float:
 
 
 def _to_float(val: Any) -> float | None:
-    """First element of tensor/list/array -> float; clamp/sigmoid as needed."""
+    """First element of tensor/list/array -> float; clamp/sigmoid as needed.
+
+    Returns None for a value that carries NO information — a NaN or an
+    infinity. A NaN posterior is not evidence of anything, and the old code
+    silently mapped it through the sigmoid to 1.0, i.e. a CONFIDENT FAKE
+    (measured: `_to_float(nan) -> 1.0`). A numerically saturated detector
+    therefore produced prob_deepfake=1.0 with status="ok" and no warning.
+    """
     try:
         if hasattr(val, "item"):  # torch.Tensor scalar
             val = val.item()
@@ -417,6 +424,12 @@ def _to_float(val: Any) -> float | None:
         if isinstance(val, (list, tuple)):
             val = val[0] if val else 0.0
         f = float(val)
+        # FAIL-OPEN FIX (2026-10-21): a non-finite posterior carries no
+        # information. Returning None makes the caller report the check as
+        # failed/unavailable, which is honest; mapping it to 0.0 or 1.0
+        # invents a confident verdict. NaN -> 1.0 was a CONFIDENT FAKE.
+        if not math.isfinite(f):
+            return None
         if f > 1.0 or f < 0.0:
             f = _sigmoid(f)  # out-of-probability-range outputs are treated as logits
         return max(0.0, min(1.0, f))
