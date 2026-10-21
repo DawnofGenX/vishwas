@@ -19,7 +19,13 @@ name: ci
 # 502. A single "437 passed" assertion is therefore really asserting "the
 # detectors are not installed".
 
-on:
+# NOTE: the `on:` key MUST be quoted. YAML 1.1 parses a bare `on` as the
+# boolean True, and GitHub's workflow parser rejects the result — the run is
+# created and then fails in 0 s with "This run likely failed because of a
+# workflow file issue", and NO jobs are ever created. The symptom is
+# indistinguishable from "the workflow is not on the default branch", which
+# is why it cost real time to diagnose. `"on":` is the same key to GitHub.
+"on":
   push:
     branches: [master, main]
   pull_request:
