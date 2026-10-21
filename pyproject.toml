@@ -74,6 +74,14 @@ binary = [
 ]
 test = [
     "pytest>=8.0",
+    # qrcode is needed by tests/test_24_qr_verify.py and
+    # tests/test_25_qr_pipeline.py. Those two modules are excluded by the
+    # default addopts (they also need a working numpy/cv2 ABI), but any run
+    # that clears addopts -- e.g. the CI "full suite" step -- collects them
+    # and fails at COLLECTION with ModuleNotFoundError if qrcode is absent.
+    # It was missing from this extra, so the CI job failed on a dependency
+    # the manifest had simply never declared.
+    "qrcode>=7.4",
 ]
 
 [project.scripts]

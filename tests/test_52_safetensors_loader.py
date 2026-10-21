@@ -49,7 +49,12 @@ def test_default_load_reads_safetensors_by_suffix(tmp_path):
     skips rather than failing — the SUFFIX DISPATCH itself is asserted
     separately below and never needs the package.
     """
-    pytest.importorskip("safetensors")
+    # NOTE: `safetensors.torch` needs TORCH, and the bare CI env has
+    # `safetensors` without `torch`. Guarding on "safetensors" alone let the
+    # import of torch blow up INSIDE the test body, so the job failed with
+    # ModuleNotFoundError: No module named 'torch' instead of skipping.
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors.torch")
     from safetensors.torch import save_file
     import torch
 
@@ -71,7 +76,8 @@ def test_default_load_dispatches_on_suffix_not_torch_load(tmp_path, monkeypatch)
     We assert the dispatch by poisoning torch.load and requiring the real
     reader to be used instead.
     """
-    pytest.importorskip("safetensors")
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors.torch")
     import torch
     from safetensors.torch import save_file
 
