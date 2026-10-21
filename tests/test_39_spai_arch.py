@@ -34,7 +34,8 @@ if _TORCH_ERROR is None:
 else:
     _ARCH_ERROR = None
 
-_SPAI_W = os.environ.get("VISHWAS_IMAGE_FACE_WEIGHTS", "/opt/verisafe/models/spai/spai.pth")
+_SPAI_W = os.environ.get("VISHWAS_IMAGE_FACE_WEIGHTS",
+                         "/opt/vishwas/models/spai/spai.pth")
 _HAVE_WEIGHTS = bool(_SPAI_W) and os.path.exists(_SPAI_W)
 
 if _TORCH_ERROR is not None:
@@ -68,39 +69,46 @@ else:
         _HEAVY_DEPS_OK = False
         _HEAVY_DEPS_ERR = f"{type(e).__name__}: {e}"
 
-    @pytest.fixture()
-    def built_spec():
-        spec = SpaiSpec()
-        model = spec.build()          # builds PatchBasedMFViT + loads weights
-        model.eval()
-        return spec, model
-
-    def test_build_and_weights_coverage(built_spec):
-        spec, model = built_spec
-        import torch
-        raw = torch.load(_SPAI_W, map_location="cpu", weights_only=False)
-        sd = raw["model"]
-        missing, unexpected = model.load_state_dict(sd, strict=False)
-        n = len(sd)
-        coverage = (n - len(missing)) / n
-        assert coverage >= 0.95
-        assert len(unexpected) == 0
-
-    def test_score_bounds_and_separation(built_spec):
-        spec, model = built_spec
-        import cv2
-        if _HEAVY_DEPS_OK:
-            from PIL import Image
-            # small real-looking image + a brighter variant: finite p in [0,1]
-            arr = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
-            p = spec.score(model, arr)
-            assert isinstance(p, float) and np.isfinite(p) and 0.0 <= p <= 1.0
-            # deterministic in eval
-            assert p == spec.score(model, arr)
-
-    # heavy build/coverage tests need weights + heavy deps; skip cleanly otherwise
+    # The heavy tests are DEFINED ONLY when the weights and the heavy deps
+    # are actually present. Previously they were defined unconditionally and
+    # a separate `test_spai_heavy_gated` skip was added alongside them — so
+    # the heavy tests still RAN and blew up with
+    # FileNotFoundError: '/opt/verisafe/models/spai/spai.pth' on a machine
+    # that has neither the weights nor the path.
+    #
+    # A skip must SUPPRESS the test, not sit next to it.
     if _HAVE_WEIGHTS and _HEAVY_DEPS_OK:
-        pass  # the fixtures above run
+
+        @pytest.fixture()
+        def built_spec():
+            spec = SpaiSpec()
+            model = spec.build()      # builds PatchBasedMFViT + loads weights
+            model.eval()
+            return spec, model
+
+        def test_build_and_weights_coverage(built_spec):
+            spec, model = built_spec
+            import torch
+            raw = torch.load(_SPAI_W, map_location="cpu", weights_only=False)
+            sd = raw["model"]
+            missing, unexpected = model.load_state_dict(sd, strict=False)
+            n = len(sd)
+            coverage = (n - len(missing)) / n
+            assert coverage >= 0.95
+            assert len(unexpected) == 0
+
+        def test_score_bounds_and_separation(built_spec):
+            spec, model = built_spec
+            import cv2
+            if _HEAVY_DEPS_OK:
+                from PIL import Image
+                # small real-looking image + a brighter variant: finite p in [0,1]
+                arr = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
+                p = spec.score(model, arr)
+                assert isinstance(p, float) and np.isfinite(p) and 0.0 <= p <= 1.0
+                # deterministic in eval
+                assert p == spec.score(model, arr)
+
     else:
         def test_spai_heavy_gated():
             reason = []
