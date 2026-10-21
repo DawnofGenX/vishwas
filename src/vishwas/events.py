@@ -108,6 +108,14 @@ class JobContext:
     pades_available: bool = False          # asn1crypto + cryptography importable
     rag_cache_available: bool = False      # RAG template-cache index present+parseable
     # budgets
+    # `deadline_mono` defaults to `time.monotonic` — i.e. the budget is ALREADY
+    # exhausted the moment the context is created. That default exists so that
+    # a context built WITHOUT an explicit deadline fails closed rather than
+    # running forever. Since 2026-10-21 it is also a trap: `cap_timeout()`
+    # (F6) reads `remaining_s()`, so a context with the default deadline hands
+    # every subprocess a 0-second timeout and a healthy scan silently degrades
+    # to status="degraded". The orchestrator always passes an explicit
+    # deadline; any other caller that does not must pass one too.
     deadline_mono: float = field(default_factory=time.monotonic)
     wall_budget_s: float = 300.0
     extra: dict[str, Any] = field(default_factory=dict)
@@ -120,6 +128,25 @@ class JobContext:
 
     def expired(self) -> bool:
         return self.remaining_s() <= 0
+
+    def cap_timeout(self, requested_s: float, floor_s: float = 5.0) -> float:
+        """F6 fix (2026-10-21): cap a subprocess/operation timeout at this job's
+        remaining wall budget so a single stage can never overrun the job
+        envelope. The old static timeouts (mobsf 420s, CAPE/strace 480s, quark
+        240s) all exceeded the 300s per-job budget and were never interrupted
+        mid-stage, so one stage could run past the whole job budget.
+
+        `floor_s` keeps a degenerate sub-floor timeout from being handed out when
+        the remaining budget is generous, but the cap is NEVER lifted above the
+        remaining budget — that would re-open the overrun.
+        """
+        rem = self.remaining_s()
+        if rem <= 0:
+            return 0.0
+        capped = min(float(requested_s), rem)
+        if capped < floor_s:
+            capped = min(floor_s, rem)   # lift to the floor, but never above budget
+        return capped
 
     def note(self, msg: str) -> None:
         self.log_lines.append(f"[{time.strftime('%H:%M:%S')}] {msg}")

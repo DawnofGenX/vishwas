@@ -27,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -193,16 +194,151 @@ def verify_openwa_signature(raw_body: bytes, signature_header: str | None,
                             secret: str) -> bool:
     """Verify X-OpenWA-Signature ('sha256=<hex>' over the RAW request bytes).
 
-    Returns False (reject) when the secret is configured but the header is missing
-    or mismatched. Constant-time compare; recomputed over exact bytes, never over
-    a re-serialized parse (OpenWA docs §HMAC).
+    F1 fix (fail-closed, 2026-10-21): when the secret is NOT configured there is
+    no way to authenticate an inbound webhook, so the request is REJECTED
+    (returns False). The previous behaviour returned True (fail-open), which let
+    a plain, unsigned POST reach the full analysis pipeline and re-send a reply
+    to the victim JID while the server listened on 0.0.0.0. The deployment's
+    gateway signs every delivery with OPENWA_WEBHOOK_SECRET, so real webhooks
+    keep working; an unsigned POST is now refused.
     """
     if not secret:
-        return True  # unsigned webhook => accepted (operator choice)
+        log.error("webhook: OPENWA_WEBHOOK_SECRET is not configured; "
+                  "REJECTING inbound (fail-closed) — set the secret to accept "
+                  "gateway webhooks")
+        return False
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header.strip())
+
+
+def safe_jid_dirname(jid: str, max_len: int = 32) -> str:
+    """F2 fix (2026-10-21): derive a SAFE single-component directory name from a
+    WhatsApp JID (untrusted input from data.from in the OpenWA envelope).
+
+    The old webhook code stripped only '=' and '@', so a JID containing '/' or
+    '..' escaped the workdir (``workdir / "../../etc"`` -> mkdir'd OUTSIDE the
+    workdir). This keeps a conservative charset (alnum, '.', '_', '-', ':'),
+    maps every other byte — including '/', '\\', '@', '=', control chars — to
+    '-', then strips leading dots/dashes so the result can never be '.', '..',
+    an absolute path, or a dotfile. The output is guaranteed to be one path
+    component, so ``workdir / safe_jid_dirname(jid)`` cannot leave ``workdir``.
+    """
+    s = str(jid or "")
+    s = re.sub(r"[^A-Za-z0-9._:-]", "-", s)   # separators & control chars -> '-'
+    s = re.sub(r"^[.:-]+", "-", s)            # no leading '.'/'-' (dotfile/absolute)
+    s = re.sub(r"-{2,}", "-", s).strip("-.")
+    return s[:max_len] or "unknown"
+
+
+def webhook_max_age_s() -> int:
+    """F3: max age (seconds) an inbound webhook envelope may be before it is
+    treated as a stale replay and rejected. Configurable via
+    VISHWAS_WEBHOOK_MAX_AGE_S; default 300s (5 min). A captured, still-validly-
+    signed request replayed later than this window cannot re-trigger the full
+    pipeline (VT quota, ffmpeg, LLM) and re-send the reply to the victim JID.
+    """
+    try:
+        return int(os.environ.get("VISHWAS_WEBHOOK_MAX_AGE_S", "300"))
+    except (ValueError, TypeError):
+        return 300
+
+
+def envelope_age_s(payload: dict, now: float | None = None) -> float | None:
+    """Seconds elapsed since the envelope's own timestamp (None if unusable).
+
+    Prefers the message-level data.timestamp (epoch-sec, set by WhatsApp at
+    send time); falls back to the envelope-level timestamp. A negative age
+    (clock skew / future-dated) is clamped to 0 — the window is a ceiling on
+    staleness, not a floor on 'must be in the past'.
+    """
+    now = time.time() if now is None else now
+    ts = None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        ts = data.get("timestamp")
+    if ts is None and isinstance(payload, dict):
+        ts = payload.get("timestamp")
+    if ts is None:
+        return None
+    try:
+        return max(0.0, now - float(ts))
+    except (TypeError, ValueError):
+        return None
+
+
+class ReplayGuard:
+    """F3: webhook replay protection — a timestamp-age window plus a durable,
+    restart-surviving delivery-id idempotency set.
+
+    Two independent gates (both enforced in the webhook path BEFORE the
+    pipeline runs):
+      * is_stale(payload) — reject envelopes whose own timestamp is older than
+        webhook_max_age_s(). A captured signed request replayed hours later is
+        dropped here. No usable timestamp => fail closed (reject).
+      * is_replay(key)    — reject a deliveryId/idempotencyKey already seen.
+        The seen-set is backed by a JSON file so a process RESTART does not
+        silently clear it (the old in-memory dict was wiped on every restart,
+        re-exposing every captured request). In-memory is a fast cache over the
+        file; the file is the source of truth.
+    """
+
+    def __init__(self, state_path: Path | None = None,
+                 max_age_s: int | None = None, ttl_s: int = 3600):
+        self.state_path = state_path
+        self.max_age_s = webhook_max_age_s() if max_age_s is None else int(max_age_s)
+        self.ttl_s = ttl_s
+        self._seen: dict[str, float] = {}
+        self._lock = threading.Lock()
+        if state_path is not None:
+            self._load()
+
+    # --- gate 1: timestamp-age window -----------------------------------
+    def is_stale(self, payload: dict, now: float | None = None) -> bool:
+        age = envelope_age_s(payload, now=now)
+        if age is None:
+            return True  # no usable timestamp => cannot prove freshness => reject
+        return age > self.max_age_s
+
+    # --- gate 2: delivery-id idempotency (durable) -----------------------
+    def is_replay(self, key: str, now: float | None = None) -> bool:
+        """Record key (if new); return True when it had already been seen."""
+        now = time.time() if now is None else now
+        with self._lock:
+            self._prune(now)
+            if key in self._seen:
+                return True
+            self._seen[key] = now
+            self._save()
+            return False
+
+    # --- back-store -------------------------------------------------------
+    def _prune(self, now: float) -> None:
+        if not self._seen:
+            return
+        for k in [k for k, t in self._seen.items() if now - t > self.ttl_s]:
+            del self._seen[k]
+
+    def _load(self) -> None:
+        try:
+            if self.state_path and self.state_path.exists():
+                data = json.loads(self.state_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._seen = {str(k): float(v) for k, v in data.items()
+                                  if float(v) > 0}
+        except Exception:  # noqa: BLE001 — corrupt state must not break intake
+            log.warning("replay state unreadable; starting empty")
+            self._seen = {}
+
+    def _save(self) -> None:
+        if not self.state_path:
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.state_path.write_text(json.dumps(self._seen), encoding="utf-8")
+        except OSError:
+            log.warning("replay state persist failed; keeping in-memory only")
 
 
 def parse_openwa_webhook(payload: dict) -> InboundMessage | None:
@@ -296,6 +432,14 @@ class MessageProcessor:
         self.session_state: dict[str, dict] = {}
         self.persist_outcomes = persist_outcomes
         self.outcome_log: Path | None = None
+        # F3: durable webhook replay guard (timestamp-age window + restart-
+        # surviving delivery-id dedupe). The state file is overridable so a
+        # hardened (PrivateTmp) unit can point VISHWAS_REPLAY_STATE at a
+        # ReadWritePaths location that survives restarts.
+        _replay_env = os.environ.get("VISHWAS_REPLAY_STATE")
+        self.replay_guard = ReplayGuard(
+            state_path=Path(_replay_env) if _replay_env
+            else (self.workdir / "replay_state.json"))
         # Per-user language preference (permanent, survives restarts). Stored as
         # {sid: lang_code} in a small JSON file — a benign UI setting, not
         # scanned content, so it is exempt from the zero-retention purge. Path is
@@ -389,7 +533,13 @@ class MessageProcessor:
             msg_dict = {**msg_dict, "sender_lang": self._lang_for(sid, st)}
 
         greeting = maybe_greet(msg_dict, self.session_state)
-        qwork = self.workdir / sid[:24]
+        # F2 fix (2026-10-21): the sender JID is untrusted input. `sid[:24]`
+        # truncates but does NOT sanitise, so a JID like "../../ESCAPED"
+        # produced "/tmp/vishwas-work/../../ESCAPED" — a directory OUTSIDE the
+        # workdir. The handler in app.py was fixed with safe_jid_dirname(), but
+        # this second sink in the processor was not, and it is the one that
+        # actually creates the directory. Both must be sanitised.
+        qwork = self.workdir / safe_jid_dirname(sid, max_len=24)
         qwork.mkdir(parents=True, exist_ok=True)
 
         def _followup_sender(chat_id: str, text: str) -> bool:
@@ -445,7 +595,14 @@ class MessageProcessor:
             if self.outcome_log is None:
                 self.workdir.mkdir(parents=True, exist_ok=True)
             self.outcome_log = self.workdir / "outcomes.jsonl"
-            rec = {"ts": time.time(), "jid": delivered["jid"], "reply": delivered["reply"]}
+            # F8 fix (2026-10-21): the local fallback must NOT persist the raw
+            # JID or the reply text (PII) — match the privacy posture of
+            # _persist(), which hashes the jid (jid_h) and drops the reply. The
+            # old fallback wrote {"jid": <full>, "reply": <full>} to a 0644 file.
+            jid = delivered.get("jid") or ""
+            jid_hash = hashlib.sha256(jid.encode()).hexdigest()[:12] if jid else ""
+            rec = {"ts": time.time(), "jid_h": jid_hash,
+                   "note": "openwa delivery failed; reply NOT persisted (privacy)"}
             with self.outcome_log.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         return False

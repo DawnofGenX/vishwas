@@ -76,7 +76,12 @@ def _artifact(tmp_path, text="hello world"):
 
 
 def _ctx(art, qroot):
-    return JobContext(job_id="t", artifact=art, quarantine_root=qroot)
+    import time as _t
+    # Model a real job: the orchestrator sets deadline = now + hard_budget_s
+    # (300s default). Without a budget the F6-capped subprocess timeout would
+    # collapse to 0 (no time left) and a healthy scan would wrongly 'degrade'.
+    return JobContext(job_id="t", artifact=art, quarantine_root=qroot,
+                      deadline_mono=_t.monotonic() + 300.0, wall_budget_s=300.0)
 
 
 def test_clamscan_runs_when_bin_on_path_and_db_present(guarded_env, tmp_path):

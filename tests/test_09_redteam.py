@@ -158,7 +158,8 @@ def test_r3_encoded_smuggled_instruction_stays_in_untrusted_block_only():
 
 
 # ------------------------------------------------- R4 webhook forgery --------
-def test_r4_hmac_verification_deterministic():
+def test_r4_hmac_verification_fails_closed_without_secret():
+    """R4: deterministic HMAC verify, plus the fail-CLOSED rule when secret unset."""
     from vishwas import channels
     secret = "test-secret-key"
     body = json.dumps({"message": "hi"}).encode()
@@ -166,8 +167,9 @@ def test_r4_hmac_verification_deterministic():
     assert channels.verify_openwa_signature(body, None, secret) is False
     assert channels.verify_openwa_signature(body, "sha256=deadbeef", secret) is False
     assert channels.verify_openwa_signature(body, good, secret) is True
-    # documented operator choice: no secret configured => unsigned accepted
-    assert channels.verify_openwa_signature(body, None, "") is True
+    # F1 fix: with NO secret configured, the webhook fails CLOSED -> reject unsigned POSTs
+    assert channels.verify_openwa_signature(body, None, "") is False
+    assert channels.verify_openwa_signature(body, "sha256=deadbeef", "") is False
 
 
 # ----------------------------------------------- R5 transform-matrix --------
