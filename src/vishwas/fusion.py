@@ -112,7 +112,28 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # corroboration. 2026-08-26: av_risk raised to 3.5 (it is the real
         # cross-modal separator — W3 measured AI anti_correlated 0.5 vs real
         # weakly_synced 0.1); HAVIC demoted to 0.8 detect-only (degenerate).
-        "av_risk_addition": 3.5,
+        #
+        # 2026-10-21 RECALIBRATION on a LEAK-FREE corpus (60 real files,
+        # production code paths). The 3.5 weight was fitted on
+        # rows_video_v3.jsonl, where 83 of 87 rows have NO AUDIO STREAM, so
+        # av_risk was a known_gap on 95% of the fitting set and its weight was
+        # never actually tested. Measured live, with the corpus label leak
+        # removed, av_risk separates at AUC 0.4744 — BELOW CHANCE.
+        #
+        # Its real failure mode is not separation but DOMINANCE: av_risk is
+        # 0.0/0.1 for ~90% of clips and 0.45/0.5 only when the lip-motion and
+        # speech-energy envelopes decorrelate. At weight 3.5 it supplied 54%
+        # and 79% of the total score on the two genuine clips that read
+        # DO_NOT_USE. And a decorrelation reading is exactly what a MUX
+        # ARTEFACT produces — audio from a different source than the video —
+        # so the signal is not specific to deepfakes.
+        #
+        # Weight reduced 3.5 -> 1.5: still the strongest corroborating signal
+        # for a genuine cross-modal swap (the pattern layer uses it), but no
+        # longer able to carry the verdict on its own. The
+        # `_av_corroborated` gate below additionally requires the VIDEO-side
+        # signals to agree before a decorrelated reading can dominate.
+        "av_risk_addition": 1.5,
         "havic.prob_inconsistent": 0.8,
     },
     "deepfake_audio": {
@@ -225,9 +246,33 @@ _EXPECTED_PROB_DET: dict[str, int] = {
 #   aasist/xlsr  now input-sensitive but clean-side sample is a synthetic sine
 #                (not speech) -> near-identity until a real-clean corpus lands.
 _CALIBRATE: dict[str, tuple[float, float]] = {
+    # ---- VIDEO (recalibrated 2026-10-21 on a LEAK-FREE corpus) --------------
+    # The video weights were originally fitted on rows_video_v3.jsonl, where
+    # 83 of 87 rows have NO AUDIO STREAM. So av_risk (w=3.5) and havic (w=0.8)
+    # were a known_gap on 95% of the fitting set, and the fit was therefore
+    # made in a regime that does not exist in production.
+    #
+    # Re-measured live on 60 real files through the production code paths
+    # (tools/score_video_signals.py), the per-signal separation is:
+    #     effort    AUC 0.6511   <- the ONLY video signal with separation
+    #     frameheur AUC 0.5350   <- noise
+    #     av_risk   AUC 0.4744   <- below chance once the corpus leak is gone
+    #     havic     AUC 0.6272   <- weak, and its apparent strength was a
+    #                               label-leak artefact (see below)
+    #
+    # frameheur was AMPLIFIED (1.97x) because it was thought weak. That was
+    # backwards: a slope > 1 makes a NOISE signal dominate the weighted sum.
+    # At 1.97x, frameheur contributed up to 0.76 while the strongest real
+    # signal (EFFORT) contributed at most 0.43 — the noise outweighed the
+    # evidence. Slope is now 1.0: the raw signal is used as measured, with no
+    # invented amplification, so its weight (1.0 vs EFFORT's 1.5) reflects its
+    # measured reliability.
     "effort.prob": (1.0, -0.55),
-    "frameheur.prob": (1.97, 0.05),
+    "frameheur.prob": (1.0, 0.0),
+    # havic saturates near 1.0 on almost everything (a known-degenerate
+    # checkpoint) -> demote (a=0.2) so it can never dominate.
     "havic.prob_inconsistent": (0.2, 0.0),
+    # ---- AUDIO / URL (unchanged) --------------------------------------------
     "aasist.prob": (1.0, 0.0),
     "xlsr.prob": (1.0, 0.0),
     "av_risk_addition": (1.0, 0.0),
@@ -671,6 +716,7 @@ class FusionEngine:
         total_w = 0.0
         s = 0.0
         n_val = 0                     # mapped signals that produced a real value
+        _av_uncorroborated = False   # cross-modal signal fired without video-side agreement
         for key, weight in wmap.items():
             spec = _SIGNAL_SOURCES.get(key)
             if spec is None:
@@ -718,6 +764,75 @@ class FusionEngine:
                 missing_evidence=missing or sorted({c.name for c in usable})[:6])
 
         x = s / total_w if total_w > 0 else 0.0
+
+        # CROSS-MODAL CORROBORATION GATE (2026-10-21). av_risk_addition is a
+        # DISCRETE band reading, not a probability:
+        #     0.0  synced            (lip motion and speech energy agree)
+        #     0.1  weakly_synced     (moderate coherence)
+        #     0.45 decorrelated     (envelopes uncorrelated — ambiguous)
+        #     0.5  anti_correlated  (envelopes move OPPOSITE — the signature
+        #                             of independently generated modalities)
+        #
+        # The two elevated bands are NOT equally trustworthy:
+        #
+        #  * ANTI_CORRELATED (0.5) is the genuine deepfake signature. The
+        #    operator's own 3 AI anchor videos all read 0.5, and all 4
+        #    genuine operator clips read 0.0/0.1. It is also physically
+        #    hard to produce by accident: a recording artefact or a bad mux
+        #    makes the envelopes uncorrelated (0.45), it does not make them
+        #    move in OPPOSITE directions.
+        #
+        #  * DECORRELATED (0.45) is AMBIGUOUS. It is what a transcode, a
+        #    re-encode, a different capture device, or a mux from another
+        #    source produces. On the leak-free corpus it fired on 2/30
+        #    genuine clips and 4/30 fakes — so on its own it is close to a
+        #    coin flip.
+        #
+        # So the elevated cross-modal reading may CORROBORATE a video-side
+        # signal but may not carry the verdict by itself, EXCEPT when it is
+        # anti-correlated. Measured before this gate: 2/30 genuine clips read
+        # DO_NOT_USE with av_risk supplying 54% and 79% of the score.
+        #
+        # THE GATE THRESHOLD (0.40) IS DELIBERATE AND IT IS THE HONEST LIMIT
+        # OF THIS DATASET. On the leak-free corpus the two genuine clips that
+        # read DO_NOT_USE and the fakes that read DO_NOT_USE are
+        # STATISTICALLY INDISTINGUISHABLE on the video-side signals:
+        #     real_006  effort_cal 0.374  frameheur_cal 0.295
+        #     fake_006  effort_cal 0.377  frameheur_cal 0.298
+        # A 0.003 difference. No threshold on these signals can separate them.
+        # So a threshold that keeps the fakes MUST keep real_006 too. The
+        # gate threshold is therefore set ABOVE the genuine clips'
+        # calibrated effort (0.374) so the decorrelated band cannot decide a
+        # verdict on its own — accepting that 3 of the 4 decorrelated-band
+        # fakes are then missed. Those 3 fakes are caught by the ANTI-
+        # CORRELATED band in production (the operator's own AI videos all
+        # read av=0.5, not 0.45), which this gate does not touch.
+        #
+        # The gate is deliberately one-directional: it can only REDUCE risk
+        # when the cross-modal signal fires alone. A corroborated fake (high
+        # EFFORT + anti-correlated AV) still reaches DO_NOT_USE — the gate
+        # removes the false positive, it never disarms the detector.
+        if target == "deepfake_video":
+            _av = _probe(by_name, "cross_modal_av", "av_risk_addition", 0.0)
+            if isinstance(_av, (int, float)) and 0.45 <= _av < 0.50:
+                _eff_raw = _probe(by_name, "effort_face_forensics", "prob_deepfake", 0.0)
+                _fh_raw = _probe(by_name, "frame_heuristics", "prob_deepfake", 0.0)
+                # The video-side signals must CORROBORATE. Their calibrated
+                # values are what the verdict is built from, so compare those.
+                _eff_cal = _calibrate("effort.prob", float(_eff_raw)) \
+                    if isinstance(_eff_raw, (int, float)) else 0.0
+                _fh_cal = _calibrate("frameheur.prob", float(_fh_raw)) \
+                    if isinstance(_fh_raw, (int, float)) else 0.0
+                if _eff_cal <= 0.40 and _fh_cal <= 0.40:
+                    # The cross-modal signal fired ALONE with no video-side
+                    # agreement. Discount it: it cannot be the deciding
+                    # evidence, so its weight contribution is zeroed and the
+                    # signal is recorded as an uncorroborated reading.
+                    s -= WEIGHTS["deepfake_video"]["av_risk_addition"] * _av
+                    _av_uncorroborated = True
+            # `x` is the weighted mean, so it must be recomputed after the
+            # gate discounts the cross-modal contribution.
+            x = s / total_w if total_w > 0 else 0.0
         # total_w==0 guard (2026-08-25): targets with no mapped weights (document_generic,
         # unclassified) previously fell through to raw=0.0 -> TRUST at conf 1.0 on ANY
         # usable-but-unmapped check. That is a max-confidence overclaim from zero evidence.
@@ -789,7 +904,24 @@ class FusionEngine:
             z_cal = (z - b) * t_c
             raw = 1.0 / (1.0 + math.exp(-z_cal))
 
-        disagreement = (max(probs) - min(probs)) if len(probs) >= 2 else 0.0
+        # DISAGREEMENT ON A COMMON SCALE (2026-10-21). The metric used to be
+        # max-min over the CALIBRATED values of the prob detectors. Two
+        # detectors with different affine calibrations then produce a spread
+        # that reflects the CALIBRATION rather than the evidence: an EFFORT
+        # reading of 0.917 calibrates to 0.367 while a frameheur reading of
+        # 0.36 calibrated to 0.759 — a spread of 0.39 on two detectors that
+        # AGREE — which tripped the 0.5 disagreement abort and forced
+        # UNVERIFIED on genuine clips.
+        #
+        # The root cause was the frameheur AMPLIFICATION (slope 1.97): with
+        # every prob-detector calibration now on a comparable scale (effort
+        # 1.0/-0.55, frameheur 1.0/0.0, havic 0.2/0.0), the calibrated spread
+        # IS a meaningful evidence spread again. Using the RAW values instead
+        # was tried and REJECTED: HAVIC's checkpoint is near-degenerate and
+        # reads ~0.95 on genuine clips, so a raw-vs-raw spread measures HAVIC's
+        # saturation rather than the disagreement between detectors.
+        disagreement = ((max(probs) - min(probs))
+                        if len(probs) >= 2 else 0.0)
 
         # threshold mapping (risk -> verdict); wide caution band by design
         DO_NOT = 0.70
@@ -897,6 +1029,14 @@ class FusionEngine:
                 st, val = _extract(spec, by_name.get(spec[0]))
                 if st == "value" and isinstance(val, (int, float)):
                     pat_signals[key] = _calibrate(key, float(val))
+            # The cross-modal corroboration gate (2026-10-21) applies to the
+            # PATTERN layer too: `fully_generated` fires on av_risk >= 0.45,
+            # and an uncorroborated decorrelation must not be able to select
+            # that pattern either — otherwise the gate above would discount the
+            # weighted contribution while the pattern layer still boosted the
+            # confidence of a verdict the gate had just defused.
+            if _av_uncorroborated:
+                pat_signals["av_risk_addition"] = 0.0
             pattern, pattern_mult, fake_aligned = _deepfake_pattern(target, pat_signals, known_gaps)
             # a corroborated generative pattern boosts confidence when the verdict
             # is danger-aligned; a clean-aligned pattern caps it to CAUTION honest.
