@@ -32,3 +32,8 @@ src/vishwas/model_archs/_spectra/wav2vec2-xls-r-300m/*.bin
 .pypirc
 .netrc
 credentials.json
+
+# Per-user reply-language preferences. This is RUNTIME STATE that maps real
+# WhatsApp JIDs to their chosen language, so it must never be committed: it
+# is both personal data and machine-specific. The app recreates it.
+user_prefs.json
