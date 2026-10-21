@@ -1,0 +1,42 @@
+# Line-ending policy (2026-10-21).
+#
+# The repo has NO .gitattributes, and this host's git has core.autocrlf=true.
+# That combination silently converted shell scripts to CRLF in the working
+# tree, which produced a shebang of `#!/usr/bin/env bash\r` — and the script
+# then failed with:
+#
+#     /usr/bin/env: 'bash\r': No such file or directory
+#
+# The health watchdog (scripts/vishwas_health_probe.sh) is executed directly
+# by cron, so a CRLF shebang makes it fail 100% of the time — and the failure
+# is silent from the operator's point of view (cron just logs a line).
+#
+# Pin the policy per file type so it cannot depend on the developer's local
+# autocrlf setting.
+
+# Shell scripts MUST be LF: their shebang is interpreted by the kernel.
+*.sh    text eol=lf
+
+# Python is safe either way, but LF is canonical for a Linux deployment.
+*.py    text eol=lf
+
+# Config/env files consumed by systemd EnvironmentFile.
+*.env   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Documentation and prose: keep the author's choice.
+*.md    text eol=lf
+
+# Binary assets — never touched.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.mp4   binary
+*.wav   binary
+*.pth   binary
+*.safetensors binary
+*.onnx  binary
+*.pem   text eol=lf
