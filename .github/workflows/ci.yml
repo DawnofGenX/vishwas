@@ -84,9 +84,9 @@ jobs:
 
       - name: Assert the gate is the MEASURED count (floor, not equality)
         run: |
-          # 471 passed / 16 skipped as of 2026-10-21. A FLOOR is used, not
-          # equality, so adding tests does not break the build — but a
-          # regression that loses tests does.
+          # 585 passed / 1 skipped as of 2026-10-21 (venv, 3.11). A FLOOR is
+          # used, not equality, so adding tests does not break the build — but
+          # a regression that loses tests does.
           # Re-collect the count rather than trusting a hardcoded string.
           out=$(env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
                   -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
@@ -98,11 +98,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 465 ]; then
-            echo "FAIL: only $passed tests passed (floor is 465)"
+          if [ "$passed" -lt 560 ]; then
+            echo "FAIL: only $passed tests passed (floor is 560)"
             exit 1
           fi
-          echo "OK: $passed tests passed (floor 465)"
+          echo "OK: $passed tests passed (floor 560)"
 
       - name: Assert the QR tests are not silently missing
         run: |

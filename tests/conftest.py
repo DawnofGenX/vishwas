@@ -36,14 +36,11 @@ if _SRC not in _pp.split(os.pathsep):
     os.environ["PYTHONPATH"] = _pp + (os.pathsep + _SRC if _pp else _SRC)
 
 # Local dependency library (trimmed asn1crypto for the PAdES/CMS stage).
-# APPEND (not insert): keeps existing resolution for every already-importable
-# module; only un-resolved names (asn1crypto) fall through here.
 #
-# WARNING (2026-10-21) — TWO hazards, both now real:
-#   (a) SERVING STACK: this APPEND is safe for the hermetic suite (which
-#       never imports transformers) but it is NOT safe for the serving path.
-#       The pylibs tree ships cryptography v50, which no longer provides the
-#       `lib` submodule pyOpenSSL imports; Python then resolves `lib` to a
+# WARNING (2026-10-21) — THREE hazards, all now real:
+#   (a) SERVING STACK: putting pylibs on the path is NOT safe for the serving
+#       path. The pylibs tree ships cryptography v50, which no longer provides
+#       the `lib` submodule pyOpenSSL imports; Python then resolves `lib` to a
 #       top-level namespace package (llama_cpp_python's site-packages/lib) and
 #       the whole accelerate/transformers import chain dies. The service
 #       therefore runs under its own venv with no pylibs on the path — see
@@ -55,11 +52,21 @@ if _SRC not in _pp.split(os.pathsep):
 #       at COLLECTION with an ImportError from
 #       `../pylibs/numpy/_core/__init__.py`.
 #       So pylibs is only put on the path for an interpreter it can serve.
+#   (c) ORDER (fixed 2026-10-21): APPENDING pylibs put the interpreter's own
+#       numpy 2.4.6 ahead of pylibs' numpy 2.5.2, and then `import cv2` blew
+#       up with "numpy.core.multiarray failed to import" — because the
+#       INTERPRETER's cv2 is compiled against numpy 1.x's C API while its own
+#       numpy is 2.4.6. pylibs' cv2 5.0.0 and pylibs' numpy 2.5.2 are a
+#       MATCHED pair, so pylibs must LEAD the path on a 3.12 interpreter.
+#       Measured: pylibs first -> numpy 2.5.2 + cv2 5.0.0 + torch 2.4.1 all
+#       import cleanly; pylibs appended -> cv2 raises ImportError.
 _PYLIBS = Path.home() / "pylibs"
 if _PYLIBS.is_dir() and str(_PYLIBS) not in sys.path:
     _tag = f"{sys.version_info.major}{sys.version_info.minor}"
     if _tag == "312":
-        sys.path.append(str(_PYLIBS))
+        # PREPEND: pylibs' numpy and cv2 are a matched pair and must win over
+        # the interpreter's mismatched numpy/cv2 combination.
+        sys.path.insert(0, str(_PYLIBS))
     else:
         # Not importable on this interpreter: adding it would only shadow the
         # working numpy. The asn1crypto fallback it provides is optional.
