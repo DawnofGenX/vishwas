@@ -53,8 +53,10 @@ that only publishes its wins is not telling you the truth:
   corpus**, so real videos read CAUTION rather than LOW. That is deliberate:
   an aggressive LOW posture on a detector that weak would be unsafe.
 
-**Test suite:** 471 passed / 16 skipped (bare env, hermetic). With the
-learned detectors installed the suite collects 502 tests — the torch-gated
+**Test suite:** 530 passed / 6 skipped (bare env, hermetic, Python 3.12;
+the 2 failures + 2 errors are the pre-existing numpy-ABI `cv2` and
+missing-`torchvision` SPAI issues). With the learned detectors installed the
+suite collects 544 tests — the torch-gated
 architecture modules skip wholesale when torch is absent, so a bare run is
 not evidence that the detectors work. CI asserts both.
 
