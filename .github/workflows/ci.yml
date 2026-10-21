@@ -30,9 +30,33 @@ name: ci
     branches: [master, main]
   pull_request:
   workflow_dispatch:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  probe:
+  # ---------------------------------------------------------------------
+  # Gate 1 — hermetic, no learned detectors. Must pass everywhere.
+  # ---------------------------------------------------------------------
+  test-bare:
+    name: hermetic suite (bare env, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the interpreter the service effectively runs under
+        # (/usr/bin/python3) and the one with torch 2.4.1 + numpy 2.5.2
+        # (pylibs) + pytest available.
+        #
+        # 3.14 is deliberately NOT in the matrix: the Hermes 3.14 tool
+        # interpreter has no numpy of its own (it ships only pip), so a
+        # 3.14 job would fail at COLLECTION for every test module rather
+        # than test anything. If a 3.14 job is wanted, the runner image
+        # must install the runtime deps first — which `pip install -e .`
+        # already does below, so the matrix entry can be added as soon as a
+        # 3.14 base image is used.
+        python-version: ["3.12"]
     steps:
-      - run: echo "probe"
+        run: echo "probe bare job"
