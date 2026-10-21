@@ -138,7 +138,7 @@ that only publishes its wins is not telling you the truth:
   anti-correlated band. **A corpus with naturally synchronised audio is
   the missing instrument.**
 
-**Test suite:** **589 passed / 1 skipped** on a developer machine (the service
+**Test suite:** **600 passed / 1 skipped** on a developer machine (the service
 venv: Python 3.11, torch 2.14.1+cu130, all learned detectors installed, and
 the legacy `pylibs` tree present). In **CI** — a clean checkout with only the
 declared dependencies — the same suite measures **506 passed / 31 skipped**
@@ -146,6 +146,14 @@ declared dependencies — the same suite measures **506 passed / 31 skipped**
 skips the six torch-gated architecture modules wholesale, so a bare run is
 *not* evidence that the detectors work; CI asserts both counts separately
 with environment-specific floors (495 bare / 575 full).
+
+**Run the suite with `scripts/run_tests_split.sh` on a memory-constrained
+host.** The full suite in ONE process is OOM-killed by the cgroup on a 25 GB
+machine (each torch checkpoint costs ~4 GB RSS; the kill appears as exit -9
+with an empty pytest output and `dmesg` reports "Memory cgroup out of
+memory"). The script splits the run into two processes that between them
+cover every test file (54 + 7 = 61, no gap) and prints the usual pytest
+output for each.
 
 Two CI gates run on every push, and a third checks the shipping invariants
 (the aasist3 helper path exists, shell scripts are LF, the launcher keeps
