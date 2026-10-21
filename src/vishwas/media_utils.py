@@ -7,6 +7,7 @@ defaults on this i5-8250U box (VISHWAS_FFMPEG_THREADS, default 2).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,6 +16,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 FFMPEG = os.environ.get("VISHWAS_FFMPEG_BIN", "ffmpeg")
 FFPROBE = os.environ.get("VISHWAS_FFPROBE_BIN", "ffprobe")
@@ -84,6 +87,38 @@ def probe(path: Path) -> ProbeInfo:
     )
 
 
+def _ffmpeg_supports(family: str) -> bool:
+    """True when the INSTALLED ffmpeg accepts the *family* of options.
+
+    ffmpeg 9.0.1 REMOVED the long-deprecated ``-vsync`` option (superseded
+    by ``-fps_mode``). Passing it makes ffmpeg exit with "Unrecognized
+    option 'vsync'" — and because the caller captures stderr, the failure was
+    invisible: extract_frames returned an empty list and every video verdict
+    degraded to UNVERIFIED with nothing logged.
+
+    We probe the actual binary once per process rather than hardcoding a
+    version check, so the code works on old ffmpeg (which still wants
+    ``-vsync``) and on new ffmpeg (which wants ``-fps_mode``).
+    """
+    if not shutil.which(FFMPEG):
+        return False
+    if family == "fps_mode":
+        args = ["-fps_mode", "vfr", "-f", "null", "-"]
+    elif family == "vsync":
+        args = ["-vsync", "vfr", "-f", "null", "-"]
+    else:
+        return False
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", *args],
+                           capture_output=True, text=True, timeout=60)
+    except Exception:
+        return False
+    combined = (r.stdout or "") + (r.stderr or "")
+    if "Unrecognized option" in combined or "Option not found" in combined:
+        return False
+    return True
+
+
 def extract_frames(src: Path, outdir: Path, n: int = 8, every_s: float | None = None,
                    max_side: int = 256, jpeg_q: int = 4) -> list[Path]:
     """Deterministic sampling: every-other-ish frame up to n. All files stay inside outdir."""
@@ -93,14 +128,22 @@ def extract_frames(src: Path, outdir: Path, n: int = 8, every_s: float | None = 
     dur = probe(src).duration_s
     step = every_s or (dur / n if n and dur > 0 else 1.0)
     # Uniform timebase sampling — deterministic across runs for the same input.
+    # Frame pacing flag is chosen by PROBING the installed ffmpeg: -fps_mode
+    # on ffmpeg >= 5, -vsync on older builds (ffmpeg 9 removed -vsync).
+    pacing = ["-fps_mode", "vfr"] if _ffmpeg_supports("fps_mode") else ["-vsync", "vfr"]
     cmd = [FFMPEG, "-nostdin", "-i", str(src), *(_threads_args()),
            "-vf", f"fps={1.0 / max(step, 0.05)},scale={max_side}:{max_side}:force_original_aspect_ratio=decrease",
-           "-vsync", "vfr", "-q:v", str(jpeg_q), "-frames:v", str(n),
+           *pacing, "-q:v", str(jpeg_q), "-frames:v", str(n),
            str(outdir / "%03d.jpg")]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=180)
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+        if r.returncode != 0:
+            # Surface the cause instead of returning an empty list silently:
+            # an empty frame list degrades EVERY video check to unavailable.
+            log.warning("ffmpeg frame extraction failed (rc=%s): %s",
+                        r.returncode, (r.stderr or b"").decode("utf-8", "ignore")[-300:])
     except subprocess.TimeoutExpired:
-        pass
+        log.warning("ffmpeg frame extraction timed out for %s", src)
     return sorted(outdir.glob("*.jpg"))[:n]
 
 
