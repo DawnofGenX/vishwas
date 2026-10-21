@@ -75,9 +75,31 @@ import torch.nn.functional as F
 from .base import ArchSpec
 from ..device import resolve_device
 
-# ImageNet normalisation (E3).
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+# NORMALISATION CONSTANTS -- CLIP's, NOT ImageNet's.
+#
+# EFFORT's backbone is a CLIP ViT-L/14, and the official implementation
+# specifies these exact values in
+# DeepfakeBench/training/config/detector/effort.yaml:
+#     mean: [0.48145466, 0.4578275, 0.40821073]
+#     std:  [0.26862954, 0.26130258, 0.27577711]
+#
+# The repo previously used ImageNet's constants ([0.485,0.456,0.406] /
+# [0.229,0.224,0.225]), which is a train/test mismatch: the ImageNet std is
+# ~17% smaller on channel 0, so the input was amplified relative to
+# training. The names are kept for continuity with the surrounding code,
+# but the VALUES are CLIP's.
+#
+# Measured on the leak-free 60-clip corpus (see
+# tools/eval_effort_norm_channel.py):
+#     (BGR, ImageNet)  <- before this fix    AUC 0.6511
+#     (BGR, CLIP)                            AUC 0.6278
+#     (RGB, ImageNet)                        AUC 0.7211
+#     (RGB, CLIP)      <- upstream           AUC 0.7189
+# The channel swap is the dominant effect; the constants are worth ~0.002
+# either way on this corpus, but they are still wrong and the upstream
+# config is unambiguous.
+_IMAGENET_MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
+_IMAGENET_STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
 
 
 class _OrthAlignLinear(nn.Module):
@@ -203,7 +225,30 @@ class EffortSpec(ArchSpec):
         return super().apply_state(model, stripped)
 
     def score(self, model: _EffortNet, x: Any) -> float:
-        """Fake/AIGC posterior in [0,1] (label order [real, fake] — E4)."""
+        """Fake/AIGC posterior in [0,1] (label order [real, fake] — E4).
+
+        INPUT CONTRACT: `x` is BGR, HWC uint8 or CHW float in [0,1] — the
+        order `cv2.imread` produces. This method converts BGR -> RGB
+        internally, because EFFORT is a CLIP ViT-L/14 and was trained on
+        RGB.
+
+        2026-10-21: the conversion was MISSING. `_img_resize_chw` (the
+        shared adapter preprocess) transposes HWC->CHW but never swaps
+        channels, so the model was fed blue-red-swapped pixels and then
+        normalised them with RGB-ordered statistics. Measured on the
+        leak-free 60-clip corpus, the swap alone was worth **+0.070 AUC**
+        (0.6511 -> 0.7211). Every sibling arch already does this --
+        `spai.py` ("SPAI was trained on PIL/RGB"), `nyuad.py`, and
+        `effnet_image.py` ("decodes through cv2, hence BGR -> RGB") -- so
+        EFFORT was the only one relying on the shared preprocess.
+
+        Normalisation is CLIP's, per the official implementation
+        (DeepfakeBench/training/config/detector/effort.yaml):
+            mean: [0.48145466, 0.4578275, 0.40821073]
+            std:  [0.26862954, 0.26130258, 0.27577711]
+        The repo previously used ImageNet's constants, which is a second
+        (smaller, ~0.002 AUC) train/test mismatch.
+        """
         if isinstance(x, (str, bytes)):
             raise TypeError(f"effort score() expects a numeric array-like, got {type(x).__name__}")
         arr = np.asarray(x, dtype=np.float32)
@@ -211,7 +256,27 @@ class EffortSpec(ArchSpec):
             arr = arr[None]                       # (1,3,224,224)
         elif arr.ndim != 4:
             raise TypeError(f"effort score() expects (3,H,W) or (N,3,H,W), got shape {arr.shape}")
-        # ImageNet normalise (E3).
+        # BGR -> RGB (the model was trained on RGB).
+        #
+        # AXIS MATTERS. `arr[..., ::-1]` reverses the LAST axis, which is the
+        # CHANNEL axis only for an HWC array. The adapter's preprocess for
+        # this family is `_img_resize_chw`, which returns CHW -- channels at
+        # axis -3 -- so the swap must be on axis -3.
+        #
+        # SPAI's `arr[..., ::-1]` is correct because ITS array is HWC.
+        # Copying that line into a CHW path silently reverses the WIDTH
+        # instead of the channels, which produces plausible-looking garbage
+        # rather than an error.
+        #
+        # By the time we get here `arr` is always 4-D (the 3-D case above was
+        # promoted with arr[None]), so the swap is on axis 1 of the 4-D
+        # array -- the channel axis of (N, C, H, W).
+        if arr.shape[1] == 3:
+            arr = arr[:, ::-1, :, :].copy()
+        elif arr.shape[-3] == 3:
+            # (3, H, W) that was not promoted above -- defensive.
+            arr = arr[None, ::-1, :, :].copy()
+        # CLIP normalise (upstream effort.yaml).
         arr = (arr - _IMAGENET_MEAN[None, :, None, None]) / _IMAGENET_STD[None, :, None, None]
         xt = torch.from_numpy(np.ascontiguousarray(arr))
         try:

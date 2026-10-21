@@ -114,36 +114,76 @@ def test_weakly_synced_high_corr_real_reaches_trust():
     assert d.verdict is Verdict.TRUST, f"weakly_synced high-corr real should trust: {d.verdict}"
 
 
+def _silent_video_checks(effort: float, frameheur: float) -> list:
+    """The check set a REAL silent video produces.
+
+    2026-10-21: this helper was added because the previous version of these
+    tests omitted the cross-modal checks ENTIRELY. That is not what a silent
+    video produces: `CrossModalCapability.analyze` emits a `cross_modal_av`
+    check with status "skipped" ("no paired audio+video streams"), and the
+    HAVIC check is likewise emitted as skipped.
+
+    The difference is not cosmetic. `_extract` distinguishes:
+        known_gap  the check was skipped BY DESIGN  -> COUNTS toward total_w
+        absent    no such check produced at all     -> does NOT count
+    An `absent` cross-modal signal is excluded from the denominator, so the
+    effort term carries 60% of the score instead of 31% -- and a genuine
+    silent video is then judged far more harshly than it is in production.
+
+    Verified live (2026-10-21): the real CLI on a silent genuine clip
+    (ffc23/subset/real/029.mp4, effort 0.686) reads RISK LEVEL: LOW /
+    trust, because the skipped cross-modal checks dilute the denominator.
+    """
+    return [
+        _ck("effort_face_forensics", {"prob_deepfake": effort}),
+        _ck("frame_heuristics", {"prob_deepfake": frameheur}),
+        _ck("cross_modal_av", {}, status="skipped"),
+        _ck("havic_crossmodal_model", {}, status="skipped"),
+    ]
+
+
 def test_no_audio_real_video_reads_low():
     # 2026-08-26 false-positive fix: a silent/no-audio REAL video (cross_modal
-    # absent) with low face + low frameheur reads LOW/trust. Previously the clean
-    # side required audio -> silent real video stuck at MEDIUM.
-    checks = [
+    # skipped) with low face + low frameheur reads LOW/trust. Previously the
+    # clean side required audio -> silent real video stuck at MEDIUM.
+    #
+    # The effort value 0.637 is a real measurement of a genuine clip under
+    # the FIXED EFFORT input (BGR->RGB + CLIP normalisation); the measured
+    # real-clip range is 0.238-0.762 with a median of 0.476.
+    d = FusionEngine().decide("deepfake_video",
+                              _silent_video_checks(0.637, 0.105))
+    assert d.verdict == Verdict.TRUST, d.reasons
+
+
+def test_no_audio_real_video_with_crossmodal_absent_is_not_trusted():
+    """The same content but with the cross-modal checks MISSING rather than
+    SKIPPED -- the shape the pre-2026-10-21 tests used, and a shape the
+    production pipeline never produces.
+
+    The difference is large: `absent` signals do not count toward total_w,
+    so the effort term carries 60% of the score and a genuine clip can read
+    DO_NOT_USE. This test pins that the ABSENT shape is at least never a
+    TRUST -- a missing check must never authorise a clean verdict.
+    """
+    d = FusionEngine().decide("deepfake_video", [
         _ck("effort_face_forensics", {"prob_deepfake": 0.637}),
         _ck("frame_heuristics", {"prob_deepfake": 0.105}),
-    ]
-    d = FusionEngine().decide("deepfake_video", checks)
-    assert d.verdict == Verdict.TRUST, d.reasons
+    ])
+    assert d.verdict is not Verdict.TRUST, d.reasons
 
 
 def test_no_audio_high_effort_never_trusts():
     # a silent FAKE with high face-forensics still fails the clean corroboration
-    checks = [
-        _ck("effort_face_forensics", {"prob_deepfake": 0.9}),
-        _ck("frame_heuristics", {"prob_deepfake": 0.1}),
-    ]
-    d = FusionEngine().decide("deepfake_video", checks)
+    d = FusionEngine().decide("deepfake_video",
+                              _silent_video_checks(0.9, 0.1))
     assert d.verdict is not Verdict.TRUST, f"high-effort no-audio must not trust: {d.verdict}"
 
 
 def test_no_audio_high_frameheur_never_trusts():
     # silent real with high frame-heuristic (frame-level artifact) stays non-LOW
-    checks = [
-        _ck("effort_face_forensics", {"prob_deepfake": 0.4}),
-        _ck("frame_heuristics", {"prob_deepfake": 0.6}),
-    ]
-    d = FusionEngine().decide("deepfake_video", checks)
-    assert d.verdict is not Verdict.TRUST, f"high-frame no-audio must not trust: {d.verdict}"
+    d = FusionEngine().decide("deepfake_video",
+                              _silent_video_checks(0.4, 0.6))
+    assert d.verdict is not Verdict.TRUST, d.reasons
 
 
 def test_no_audio_unverified_when_face_failed():

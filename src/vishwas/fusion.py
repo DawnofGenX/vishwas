@@ -296,7 +296,33 @@ _CALIBRATE: dict[str, tuple[float, float]] = {
     # evidence. Slope is now 1.0: the raw signal is used as measured, with no
     # invented amplification, so its weight (1.0 vs EFFORT's 1.5) reflects its
     # measured reliability.
-    "effort.prob": (1.0, -0.55),
+    # 2026-10-21 RECALIBRATED after the BGR->RGB fix to the EFFORT input
+    # (model_archs/effort.py). The old offset was fitted to the BROKEN score
+    # distribution: with the corrected input the scores move DOWN by ~0.15
+    # (real median 0.6326 -> 0.4762, fake 0.7707 -> 0.6190), so -0.55
+    # clipped both classes to ~0 and 18 of 30 fakes read TRUST.
+    #
+    # Re-derived by measurement, against the DESIGN INTENT recorded in the
+    # original calibration notes:
+    #     (a) genuine media must not read DO_NOT_USE on effort alone;
+    #     (b) the operator's AI videos must still read DO_NOT_USE, via the
+    #         cross-modal corroboration (av_risk + havic), not effort alone.
+    #
+    # Measured on the OPERATOR'S OWN media (4 genuine natural-audio clips,
+    # 3 AI anchor videos) with the fixed model:
+    #     offset -0.55 .. -0.40  -> 4/4 real trust,  0/3 AI flagged
+    #     offset -0.30 .. -0.15  -> 4/4 real trust,  3/3 AI DNU   <-- chosen
+    #     offset -0.10            -> 2/4 real read DO_NOT_USE  (too loose)
+    #
+    # -0.30 is the CONSERVATIVE end of the band that satisfies the intent:
+    # the most offset, i.e. the least loosening, that still flags all three
+    # AI videos.
+    #
+    # On the leak-free 60-clip corpus at -0.30: 2/30 genuine clips read
+    # DO_NOT_USE, 10/30 fakes read DO_NOT_USE, 15/30 fakes read TRUST.
+    # (No offset gives both zero false positives and zero false negatives
+    # on that corpus -- see the video-channel measurement note.)
+    "effort.prob": (1.0, -0.30),
     "frameheur.prob": (1.0, 0.0),
     # havic saturates near 1.0 on almost everything (a known-degenerate
     # checkpoint) -> demote (a=0.2) so it can never dominate.
