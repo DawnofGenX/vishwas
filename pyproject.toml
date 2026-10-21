@@ -82,6 +82,10 @@ test = [
     # It was missing from this extra, so the CI job failed on a dependency
     # the manifest had simply never declared.
     "qrcode>=7.4",
+    # zxing-cpp is a HARD import in src/vishwas/qr_verify/decoder.py
+    # (`import zxingcpp`), so importing that module raises without it. The
+    # two QR test modules import it transitively.
+    "zxing-cpp>=2.2",
 ]
 
 [project.scripts]

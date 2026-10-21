@@ -97,9 +97,20 @@ jobs:
 
       - name: Assert the gate is the MEASURED count (floor, not equality)
         run: |
-          # 585 passed / 1 skipped as of 2026-10-21 (venv, 3.11). A FLOOR is
-          # used, not equality, so adding tests does not break the build — but
-          # a regression that loses tests does.
+          # The floor is ENVIRONMENT-SPECIFIC, and that is the point.
+          #
+          # The bare env has NO torch, so the six torch-gated arch modules
+          # skip wholesale: the suite collects 506 here and 585 in the
+          # full-env job. A single shared floor would either be too low for
+          # the full job (letting a real regression through) or too high for
+          # the bare job (failing on the env, not on the code).
+          #
+          # Measured 2026-10-21:
+          #   bare env (py3.12, no torch)  -> 506 passed, 27 skipped
+          #   full env (py3.12 + torch)     -> 585 passed,  1 skipped
+          #
+          # Each floor is a FLOOR, not equality, so adding tests does not
+          # break the build - but losing tests does.
           # Re-collect the count rather than trusting a hardcoded string.
           out=$(env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
                   -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
@@ -111,11 +122,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 560 ]; then
-            echo "FAIL: only $passed tests passed (floor is 560)"
+          if [ "$passed" -lt 490 ]; then
+            echo "FAIL: only $passed tests passed (bare-env floor is 490)"
             exit 1
           fi
-          echo "OK: $passed tests passed (floor 560)"
+          echo "OK: $passed tests passed (bare-env floor 490)"
 
       - name: Assert the QR tests are not silently missing
         run: |
@@ -185,6 +196,31 @@ jobs:
               -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
               -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
             python -m pytest tests/ -q -p no:cacheprovider --override-ini="addopts="
+
+      - name: Assert the full-env count (its own floor, not the bare one)
+        run: |
+          # The full env collects ~79 MORE tests than the bare env, because
+          # the six torch-gated arch modules stop skipping. A separate floor
+          # is required: sharing the bare floor would let a regression in the
+          # DETECTOR-GATED tests through unnoticed, which is precisely the
+          # class of failure this job exists to catch.
+          # Measured 2026-10-21: 585 passed / 1 skipped.
+          out=$(env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
+                  -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
+                  -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
+                python -m pytest tests/ -q -p no:cacheprovider \
+                --override-ini="addopts=" 2>&1 | tail -3)
+          echo "$out"
+          passed=$(echo "$out" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+          if [ -z "$passed" ]; then
+            echo "FAIL: could not parse a passed count from: $out"
+            exit 1
+          fi
+          if [ "$passed" -lt 560 ]; then
+            echo "FAIL: only $passed tests passed (full-env floor is 560)"
+            exit 1
+          fi
+          echo "OK: $passed tests passed (full-env floor 560)"
 
   # ---------------------------------------------------------------------
   # Gate 3 — the shipping invariants that are easy to break.
