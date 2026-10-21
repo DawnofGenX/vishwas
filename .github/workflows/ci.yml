@@ -106,8 +106,17 @@ jobs:
           # the bare job (failing on the env, not on the code).
           #
           # Measured 2026-10-21:
-          #   bare env (py3.12, no torch)  -> 506 passed, 27 skipped
-          #   full env (py3.12 + torch)     -> 585 passed,  1 skipped
+          #   bare env (py3.12, no torch)  -> 506 passed, 31 skipped
+          #   full env (py3.12 + torch)     -> 582 passed, 21 skipped
+          #
+          # MEASURE THE CI ENV, NOT THE LOCAL ONE. A developer machine has
+          # torch and the legacy `pylibs` tree installed, so the local bare
+          # run collects far MORE tests than CI does (598 vs 537 collected)
+          # and the torch-gated modules RUN instead of skipping. The CI
+          # number is the portable one: it is the environment a fresh
+          # checkout actually gets. Using the local count as the floor made
+          # the bare job fail for a reason that had nothing to do with the
+          # code.
           #
           # Each floor is a FLOOR, not equality, so adding tests does not
           # break the build - but losing tests does.
@@ -122,11 +131,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 490 ]; then
-            echo "FAIL: only $passed tests passed (bare-env floor is 490)"
+          if [ "$passed" -lt 495 ]; then
+            echo "FAIL: only $passed tests passed (bare-env floor is 495)"
             exit 1
           fi
-          echo "OK: $passed tests passed (bare-env floor 490)"
+          echo "OK: $passed tests passed (bare-env floor 495)"
 
       - name: Assert the QR tests are not silently missing
         run: |
@@ -204,7 +213,10 @@ jobs:
           # is required: sharing the bare floor would let a regression in the
           # DETECTOR-GATED tests through unnoticed, which is precisely the
           # class of failure this job exists to catch.
-          # Measured 2026-10-21: 585 passed / 1 skipped.
+          # Measured in CI on 2026-10-21: 582 passed / 21 skipped.
+          # (A developer machine with the legacy `pylibs` tree installed
+          # measures higher -- 589 -- because the torch-gated modules there
+          # RUN rather than skip. The CI number is the portable one.)
           out=$(env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
                   -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
                   -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
@@ -216,11 +228,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 560 ]; then
-            echo "FAIL: only $passed tests passed (full-env floor is 560)"
+          if [ "$passed" -lt 575 ]; then
+            echo "FAIL: only $passed tests passed (full-env floor is 575)"
             exit 1
           fi
-          echo "OK: $passed tests passed (full-env floor 560)"
+          echo "OK: $passed tests passed (full-env floor 575)"
 
   # ---------------------------------------------------------------------
   # Gate 3 — the shipping invariants that are easy to break.

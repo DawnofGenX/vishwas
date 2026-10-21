@@ -151,9 +151,38 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # 2026-08-26 NOT-BINARY-GATE (operator directive + measured evidence):
         # SPAI (CVPR'25 spectral, vendored W2) feeds faceforensics.prob as an
         # EVIDENCE signal, but a single learned-model read must NEVER flip an
-        # image to DO_NOT_USE — that was the chameleon overfit class. freqband
-        # measured dead-noise (real med 0.463 vs AI 0.399 — overlapping), so no
-        # second independent signal exists yet → images cap at CAUTION below.
+        # image to DO_NOT_USE — that was the chameleon overfit class.
+        #
+        # 2026-10-21 RECALCULATED on the raw 60-image corpus through the
+        # production paths. freqband is not "dead noise" as the comment
+        # below used to say — it is ANTI-CORRELATED:
+        #     real photos  median 0.4625 (max 0.5150)
+        #     AI images    median 0.3990 (max 0.4710)
+        #     AUC(fake=high) = 0.1222   (the inverse of 0.8778)
+        # A genuine photo scores HIGHER on "prob_deepfake" than an AI image.
+        # The signal's SIGN is wrong, and it carries a POSITIVE weight, so it
+        # pushes real photos toward more risk.
+        #
+        # IT IS ALSO INERT, and that is the part worth knowing:
+        #     config                         fakeTRUST  realFALSEALARM
+        #     as shipped (w=+0.5)                3/30        12/30
+        #     sign flipped (w=-0.5)             3/30        12/30
+        #     flipped via calibration 1-fb      3/30        12/30
+        #     REMOVED entirely                 3/30        12/30
+        # Rows whose VERDICT changed when the sign was flipped: 0/60.
+        # Two reasons: (a) the image channel CAPS at CAUTION, so the ~0.15
+        # offset this weight adds to every score cannot change a band;
+        # (b) the clean-side guard (fb > 0.60) never fires, because the max
+        # freqband on ANY image is 0.5150.
+        #
+        # It is deliberately LEFT IN PLACE, because removing it is a
+        # weight-map change that needs its own evidence and it is measurably
+        # inert. But it is a landmine: lowered to a plausible-looking 0.45,
+        # that guard would block 21 of 30 GENUINE photos and 1 of 30 AI
+        # images — pushing real photos AWAY from reading LOW, in the wrong
+        # direction. Do not "tighten" it without re-deriving it.
+        # See tests/test_62_freqband_inverted.py and
+        # tools/eval_freqband_sign.py.
         "freqband.prob": 0.5,
         "faceforensics.prob": 1.0,
     },
@@ -368,6 +397,16 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     #   - freqband is a DEMOTE-ONLY guard: block trust only when it's clearly
     #     high (>0.6, well above its noise floor) — NOT at 0.45, which a real
     #     photo crosses just from normal band energy.
+    #
+    #     2026-10-21: the ">0.6, well above its noise floor" reasoning is
+    #     WRONG in one respect — freqband is not noise, it is INVERTED
+    #     (real photos score higher than AI images; AUC(fake=high) 0.1222).
+    #     The 0.6 threshold is still the right one, but for a different
+    #     reason: it is above the MAXIMUM value any image in the measured
+    #     corpus produces (0.5150 over reals, 0.4710 over fakes), so the
+    #     guard is inert. Lowering it to a "tighter" 0.45 would block 21 of
+    #     30 GENUINE photos and 1 of 30 AI images — the wrong way round.
+    #     Do not lower it. See tests/test_62_freqband_inverted.py.
     eff_c = by_name.get("image_face_forensics")
     fb = _probe(by_name, "frequency_band_analysis", "prob_deepfake", 0.0)
     if fb > 0.60:
