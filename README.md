@@ -34,6 +34,56 @@ Posterior medians: aasist3 bonafide **0.0000** / spoof **0.9831** (perfectly
 separated, 0/150 misclassified at 0.5) · SPAI real **0.0015** / AI **0.6790**
 · EFFORT real **0.6209** / fake **0.7227**.
 
+### The video channel was re-measured on a corpus that had a label leak
+
+The cross-modal gates were originally weighted on the 87-clip calibration
+corpus, which has **no audio stream on 83 of its 87 rows** — so AV-sync
+(weight 3.5) and HAVIC (weight 0.8) were a `known_gap` on 95% of the set the
+weights were tuned on, and their weights were never actually tested.
+
+The first cross-modal corpus built to fill that gap (`rows_crossmodal_v1`)
+**muxed bonafide audio onto real clips and spoof audio onto fake clips** —
+so the audio label was a deterministic function of the video label. That
+inflated the cross-modal gates by a large margin. A leak-free rebuild
+(`tools/build_crossmodal_corpus_v2.py`, which distributes the same audio pool
+across both classes and asserts the marginals match) measured the truth:
+
+| Signal | leaked corpus AUC | leak-free AUC | verdict |
+|---|---|---|---|
+| effort (video-only) | 0.6328 | 0.6511 | the only video signal with real separation |
+| frameheur (video-only) | 0.5233 | 0.5350 | noise |
+| av_risk | 0.6422 | **0.4744** | below chance once the leak is gone |
+| havic | 0.9461 | **0.6272** | the 0.9461 was label leakage |
+
+**Fixes applied (2026-10-21):**
+
+- `frameheur.prob`'s affine calibration was **amplifying a noise signal 1.97x**,
+  so it contributed up to 0.76 while the strongest real signal (EFFORT)
+  contributed at most 0.43 — the noise outweighed the evidence. Slope is now
+  1.0, with no invented amplification.
+- `av_risk_addition`'s weight dropped 3.5 → 1.5, and a **corroboration gate**
+  now discounts the *decorrelated* band (0.45) when no video-side signal
+  agrees with it. The *anti-correlated* band (0.5) is untouched: that is the
+  genuine deepfake signature — all 3 of the operator's own AI videos read
+  0.5, and all 4 genuine operator clips read 0.0/0.1.
+- The `disagreement` metric compared **calibrated** values across two
+  differently-scaled detectors, so two detectors that agreed produced a
+  spread of 0.39 and tripped the abort on genuine clips. With the
+  calibrations now on comparable scales the calibrated spread is meaningful
+  again.
+
+**Measured outcome** on the leak-free corpus (60 rows, production code
+paths): **0 genuine clips read DO_NOT_USE** (was 2), **0 fakes read TRUST**,
+and the operator's 3 AI videos now read `do_not_use` end-to-end through the
+CLI (they previously read `trust`).
+
+**The honest limit:** this corpus cannot yield both zero false positives and
+full detection. `real_006` and `fake_006` differ by 0.003 in calibrated
+EFFORT, so no threshold on the video-side signals separates them. The gate
+therefore keeps 3 of 30 fakes flagged and misses the rest to CAUTION. Treat
+the video channel as **single-signal plus a cross-modal corroborator**, not
+as a detector with demonstrated separation.
+
 **Where each detector still falls short** — stated because a security tool
 that only publishes its wins is not telling you the truth:
 

@@ -38,6 +38,12 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
     "cryptography>=42.0",
+    # asn1crypto parses the CMS/PAdES envelope in src/vishwas/pades_check.py.
+    # It was MISSING from this manifest while the code imported it, so the
+    # gov_document signature tier silently disabled itself (app.py and
+    # gov_document.py both gate on importlib.util.find_spec("asn1crypto")) and
+    # 12 tests in test_12_pades.py failed in the service venv.
+    "asn1crypto>=1.5",
     "pillow>=10.0",
     "safetensors>=0.4",
 ]

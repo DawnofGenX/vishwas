@@ -12,6 +12,7 @@ real rather than nothing.
 """
 from __future__ import annotations
 
+import logging
 import os
 import statistics
 from pathlib import Path
@@ -23,6 +24,8 @@ from ..device import resolve_device
 from ..events import Artifact, JobContext, MediaKind
 from ..model_adapters import resolve as _resolve_adapter, _call_model as _call_model_compat, _auto_extract, is_usable_model as _is_usable_model
 from .base import CheckResult
+
+log = logging.getLogger("vishwas.image_facecheck")
 
 IMAGE_KINDS = {MediaKind.PNG, MediaKind.JPEG, MediaKind.WEBP, MediaKind.GIF,
                MediaKind.TIFF, MediaKind.HEIC}
@@ -42,18 +45,41 @@ def _subprocess_nyuad_score(path: Path, timeout_s: float = _NYUAD_SUBPROC_TIMEOU
     """Score one image via the .venv-ambient NYUAD helper. Returns p_fake in [0,1]
     or None on any failure (never fabricates). MUST run with a CLEAN PYTHONPATH so
     .venv-ambient's own transformers/torch win (the webhook's inherited
-    docling-python/pylibs shadow them with the broken transformers-5.15 stack)."""
+    docling-python/pylibs shadow them with the broken transformers-5.15 stack).
+
+    Mirrors deepfake_audio._subprocess_aasist3_score (2026-10-21 hardening): every
+    failure mode is logged loudly rather than swallowed — a silently dead
+    interpreter (the .venv-ambient tree is an out-of-tree dependency that can break
+    on its own) must be visible, not inferred from a suspicious absence of signal.
+    A None return downgrades the channel to an honest 'unavailable' check; the
+    caller (analyze) never invents a score from it.
+    """
     import copy
     import subprocess
     venv_env = copy.deepcopy(dict(os.environ))
-    venv_env.pop("PYTHONPATH", None)
+    venv_env.pop("PYTHONPATH", None)  # let .venv-ambient site-packages resolve
+    if not os.path.exists(_VENV_AMBIENT_PY):
+        log.warning(
+            "nyuad helper interpreter missing: %s — NYUAD second image signal "
+            "unavailable (SPAI carries the image channel). Repair with: "
+            "uv python install 3.11 && see deploy/vishwas-secrets.env",
+            _VENV_AMBIENT_PY,
+        )
+        return None
+    if not os.path.exists(_NYUAD_HELPER):
+        log.warning("nyuad helper script missing: %s — NYUAD unavailable", _NYUAD_HELPER)
+        return None
     try:
         r = subprocess.run(
             [_VENV_AMBIENT_PY, _NYUAD_HELPER, str(path)],
             capture_output=True, text=True, timeout=timeout_s, env=venv_env)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        log.warning("nyuad helper failed to execute (%s: %s) — NYUAD unavailable",
+                    type(exc).__name__, exc)
         return None
     if r.returncode != 0:
+        log.warning("nyuad helper exited %s — NYUAD unavailable (stderr: %s)",
+                    r.returncode, (r.stderr or "").strip()[:200])
         return None
     for line in r.stdout.splitlines():
         x = line.strip()
@@ -64,6 +90,7 @@ def _subprocess_nyuad_score(path: Path, timeout_s: float = _NYUAD_SUBPROC_TIMEOU
             return min(1.0, max(0.0, p))
         except ValueError:
             continue
+    log.warning("nyuad helper produced no parseable posterior — NYUAD unavailable")
     return None
 
 
