@@ -31,16 +31,9 @@ name: ci
   pull_request:
 
 jobs:
-  test-bare:
-    name: hermetic suite (bare env, py${{ matrix.python-version }})
+  probe:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: echo "probe matrix job"
+      - run: echo "probe"
+        env:
+          # only a comment, no keys
