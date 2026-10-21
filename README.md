@@ -91,6 +91,19 @@ that only publishes its wins is not telling you the truth:
   2 midjourney v6.1, 2 stable-diffusion-3, 1 gigagan. It also false-highs
   6 of 30 real photos. This is why a second, independent image signal
   (NYUAD, 3-class ViT) corroborates SPAI rather than trusting it alone.
+  Measured: **AI images reading clean drop from 11/30 to 3/30** with NYUAD,
+  because the two detectors miss *different* images.
+- **`freqband` is not "dead noise" — it is INVERTED.** The old comment
+  claimed it was uninformative; measured on the raw 60-image corpus it is
+  anti-correlated: real photos score **higher** than AI images (median 0.4625
+  vs 0.3990, AUC(fake=high) **0.1222**). Its positive weight therefore
+  pushes genuine photos toward more risk. It is also **inert**: flipping the
+  sign, flipping it via calibration, and removing it outright all give
+  **identical verdicts on all 60 images** (0 rows changed), because the image
+  channel caps at CAUTION and the clean-side guard never fires (max freqband
+  on any image is 0.5150, below its 0.60 threshold). It is left in place
+  deliberately, but it is a landmine: a "tighter" 0.45 threshold would block
+  **21 of 30 genuine photos and 1 of 30 AI images** — the wrong way round.
 - **EFFORT barely separates on this corpus** (AUC 0.6654). The 87-clip
   calibration corpus behind the older operating point has **no audio stream
   on 83 of its 87 rows**, so the two cross-modal gates (AV-sync, weight 3.5;
@@ -103,12 +116,19 @@ that only publishes its wins is not telling you the truth:
   corpus**, so real videos read CAUTION rather than LOW. That is deliberate:
   an aggressive LOW posture on a detector that weak would be unsafe.
 
-**Test suite:** 530 passed / 6 skipped (bare env, hermetic, Python 3.12;
-the 2 failures + 2 errors are the pre-existing numpy-ABI `cv2` and
-missing-`torchvision` SPAI issues). With the learned detectors installed the
-suite collects 544 tests — the torch-gated
-architecture modules skip wholesale when torch is absent, so a bare run is
-not evidence that the detectors work. CI asserts both.
+**Test suite:** **589 passed / 1 skipped** in the service venv (Python 3.11,
+torch 2.14.1+cu130, all learned detectors installed); **583 passed / 6
+skipped** in a bare environment (Python 3.12, no torch). The bare run skips
+the six torch-gated architecture modules wholesale, so a bare run is *not*
+evidence that the detectors work — CI asserts both counts separately, with
+environment-specific floors (490 bare / 560 full), because the two
+environments legitimately collect different test counts.
+
+Two CI gates run on every push, and a third checks the shipping invariants
+(the aasist3 helper path exists, shell scripts are LF, the launcher keeps
+pylibs off the PYTHONPATH, no secret file is tracked). `master` is
+branch-protected: a direct push is rejected, and a PR must pass all three
+checks to merge.
 
 ### Components rejected on evidence
 

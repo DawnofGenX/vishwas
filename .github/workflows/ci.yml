@@ -106,8 +106,8 @@ jobs:
           # the bare job (failing on the env, not on the code).
           #
           # Measured 2026-10-21:
-          #   bare env (py3.12, no torch)  -> 506 passed, 27 skipped
-          #   full env (py3.12 + torch)     -> 585 passed,  1 skipped
+          #   bare env (py3.12, no torch)  -> 583 passed,  6 skipped
+          #   full env (py3.12 + torch)     -> 589 passed,  1 skipped
           #
           # Each floor is a FLOOR, not equality, so adding tests does not
           # break the build - but losing tests does.
@@ -122,11 +122,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 490 ]; then
-            echo "FAIL: only $passed tests passed (bare-env floor is 490)"
+          if [ "$passed" -lt 570 ]; then
+            echo "FAIL: only $passed tests passed (bare-env floor is 570)"
             exit 1
           fi
-          echo "OK: $passed tests passed (bare-env floor 490)"
+          echo "OK: $passed tests passed (bare-env floor 570)"
 
       - name: Assert the QR tests are not silently missing
         run: |
@@ -216,11 +216,11 @@ jobs:
             echo "FAIL: could not parse a passed count from: $out"
             exit 1
           fi
-          if [ "$passed" -lt 560 ]; then
-            echo "FAIL: only $passed tests passed (full-env floor is 560)"
+          if [ "$passed" -lt 575 ]; then
+            echo "FAIL: only $passed tests passed (full-env floor is 575)"
             exit 1
           fi
-          echo "OK: $passed tests passed (full-env floor 560)"
+          echo "OK: $passed tests passed (full-env floor 575)"
 
   # ---------------------------------------------------------------------
   # Gate 3 — the shipping invariants that are easy to break.
