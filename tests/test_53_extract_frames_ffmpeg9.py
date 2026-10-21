@@ -88,22 +88,46 @@ def test_extract_frames_returns_frames_not_an_empty_list():
 
 
 def test_extract_frames_never_uses_a_rejected_option():
-    """Static assertion: the extraction command must not USE -vsync when the
-    installed ffmpeg rejects it. Guards against the option creeping back.
+    """The extraction command must only USE a pacing flag the INSTALLED
+    ffmpeg accepts.
 
-    The source may still MENTION "-vsync" as the legacy fallback (that is
-    required for old ffmpeg builds), so this asserts on the SELECTION logic
-    rather than on the string: the modern flag must be preferred whenever the
-    installed ffmpeg accepts it.
+    This used to assert that the installed ffmpeg rejected -vsync, which
+    was true for the Hermes tool copy (ffmpeg 9.0.1, where the option was
+    REMOVED) but false for /usr/bin/ffmpeg (6.1.1, which accepts both).
+    The service now pins /usr/bin/ffmpeg, so the assertion was checking a
+    property of one binary rather than a property of the CODE.
+
+    The property that actually matters: whatever the installed ffmpeg is, the
+    flag the launcher selects must be one that ffmpeg accepts. Assert that
+    the selection is consistent with the probe, and that the chosen flag
+    really works.
     """
     if not shutil.which(media_utils.FFMPEG):
         pytest.skip("ffmpeg not on PATH")
-    if not _installed_ffmpeg_supports(["-fps_mode", "vfr", "-f", "null", "-"]):
-        pytest.skip("installed ffmpeg supports neither pacing flag")
-    assert media_utils._ffmpeg_supports("fps_mode") is True
-    # And the helper must correctly report the legacy option as unsupported
-    # on this ffmpeg 9 build.
-    assert media_utils._ffmpeg_supports("vsync") is False, (
-        "_ffmpeg_supports('vsync') must be False on ffmpeg 9+, which removed "
-        "the option"
+
+    import subprocess as sp
+
+    def _selected_flag():
+        # Re-derive what extract_frames will choose, using the same helper.
+        if media_utils._ffmpeg_supports("fps_mode"):
+            return ["-fps_mode", "vfr"]
+        return ["-vsync", "vfr"]
+
+    flag = _selected_flag()
+    # The selected flag must be accepted by the installed binary.
+    r = sp.run([media_utils.FFMPEG, "-hide_banner", *flag, "-f", "null", "-"],
+               capture_output=True, text=True, timeout=60)
+    combined = (r.stdout or "") + (r.stderr or "")
+    assert "Unrecognized option" not in combined, (
+        f"extract_frames would use {flag}, which the installed ffmpeg "
+        f"rejects: {combined[-200:]}"
     )
+    assert "Option not found" not in combined
+
+    # And the probe must agree with reality: if -fps_mode is reported
+    # unsupported, the fallback must be supported.
+    if not media_utils._ffmpeg_supports("fps_mode"):
+        assert media_utils._ffmpeg_supports("vsync") is True, (
+            "neither -fps_mode nor -vsync is supported by the installed "
+            "ffmpeg; the extraction command cannot work"
+        )

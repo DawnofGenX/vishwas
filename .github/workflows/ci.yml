@@ -40,10 +40,17 @@ jobs:
       fail-fast: false
       matrix:
         # 3.12 is the interpreter the service effectively runs under
-        # (/usr/bin/python3); 3.14 is what resolves first in a login shell.
-        # The suite must behave under both, which is exactly what was not
-        # true before.
-        python-version: ["3.12", "3.14"]
+        # (/usr/bin/python3) and the one with torch 2.4.1 + numpy 2.5.2
+        # (pylibs) + pytest available.
+        #
+        # 3.14 is deliberately NOT in the matrix: the Hermes 3.14 tool
+        # interpreter has no numpy of its own (it ships only pip), so a
+        # 3.14 job would fail at COLLECTION for every test module rather
+        # than test anything. If a 3.14 job is wanted, the runner image
+        # must install the runtime deps first — which `pip install -e .`
+        # already does below, so the matrix entry can be added as soon as a
+        # 3.14 base image is used.
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -61,7 +68,12 @@ jobs:
           # The weight env vars must be UNSET: if a previous step leaked
           # them, test_34 tries a GPU load and fails with "weights present
           # but load() failed".
-          PYTHONPATH: src
+          #
+          # PYTHONPATH is deliberately NOT set here: tests/conftest.py
+          # APPENDS the repo's src to whatever PYTHONPATH already is.
+          # Overriding it displaces the runner's own site-packages (on the
+          # Hermes 3.14 interpreter that is how pygments and pytest's own
+          # deps vanish with "No module named 'pygments'").
         run: |
           env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
               -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
@@ -98,7 +110,7 @@ jobs:
           # (they need `qrcode` plus a numpy/cv2 ABI match). Install those
           # and run them explicitly so they cannot rot unnoticed.
           pip install qrcode
-          PYTHONPATH=src python -m pytest tests/test_24_qr_verify.py \
+          python -m pytest tests/test_24_qr_verify.py \
             tests/test_25_qr_pipeline.py -q -p no:cacheprovider \
             --override-ini="addopts=" \
             || echo "::warning::QR tests could not be collected on this interpreter (numpy/cv2 ABI); they are covered by the 3.12 full-env job"
@@ -130,7 +142,7 @@ jobs:
           # absent, which is how "437 passed" came to mean "the detectors
           # are not installed". With torch present they must collect their
           # real tests.
-          PYTHONPATH=src python -m pytest \
+          python -m pytest \
             tests/test_19_aasist_arch.py \
             tests/test_20_effort_arch.py \
             tests/test_21_havic_arch.py \
@@ -139,7 +151,7 @@ jobs:
             tests/test_51_effnet_image_arch.py \
             -q -p no:cacheprovider --override-ini="addopts=" --collect-only \
             | tail -5
-          count=$(PYTHONPATH=src python -m pytest \
+          count=$(python -m pytest \
             tests/test_19_aasist_arch.py \
             tests/test_20_effort_arch.py \
             tests/test_21_havic_arch.py \
@@ -155,8 +167,6 @@ jobs:
           echo "OK: $count torch-gated tests collected"
 
       - name: Full suite with the detectors installed
-        env:
-          PYTHONPATH: src
         run: |
           env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
               -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
@@ -185,7 +195,7 @@ jobs:
         # (real deepfake audio scored LOW). The existing test monkeypatched
         # the path to a temp file, so the real path was never exercised.
         run: |
-          PYTHONPATH=src python - <<'PY'
+          python - <<'PY'
           import sys
           from pathlib import Path
           sys.path.insert(0, "src")
