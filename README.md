@@ -116,13 +116,14 @@ that only publishes its wins is not telling you the truth:
   corpus**, so real videos read CAUTION rather than LOW. That is deliberate:
   an aggressive LOW posture on a detector that weak would be unsafe.
 
-**Test suite:** **589 passed / 1 skipped** in the service venv (Python 3.11,
-torch 2.14.1+cu130, all learned detectors installed); **583 passed / 6
-skipped** in a bare environment (Python 3.12, no torch). The bare run skips
-the six torch-gated architecture modules wholesale, so a bare run is *not*
-evidence that the detectors work — CI asserts both counts separately, with
-environment-specific floors (490 bare / 560 full), because the two
-environments legitimately collect different test counts.
+**Test suite:** **589 passed / 1 skipped** on a developer machine (the service
+venv: Python 3.11, torch 2.14.1+cu130, all learned detectors installed, and
+the legacy `pylibs` tree present). In **CI** — a clean checkout with only the
+declared dependencies — the same suite measures **506 passed / 31 skipped**
+(bare, no torch) and **582 passed / 21 skipped** (with torch). The bare run
+skips the six torch-gated architecture modules wholesale, so a bare run is
+*not* evidence that the detectors work; CI asserts both counts separately
+with environment-specific floors (495 bare / 575 full).
 
 Two CI gates run on every push, and a third checks the shipping invariants
 (the aasist3 helper path exists, shell scripts are LF, the launcher keeps
