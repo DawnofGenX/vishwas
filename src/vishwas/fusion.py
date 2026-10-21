@@ -415,6 +415,32 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     # often scores SPAI ~0.0 (the false-clean), so clean must ALSO require NYUAD low
     # when it ran. If NYUAD is absent/unavailable, we still trust on SPAI (don't
     # hard-block the whole image channel on a missing second detector).
+    #
+    # 2026-10-21: the EITHER-detector-veto behaviour is deliberate and was
+    # re-derived by measurement (tools/eval_image_arbitration.py). It looks
+    # tempting to relax it -- treat a SPAI/NYUAD disagreement as "uncertain"
+    # rather than "risky", which would appear to drop 5 real-photo false
+    # alarms while keeping 8 AI catches. That is FALSE, and the reason is
+    # structural: the 5 real photos NYUAD alone flags and the 8 AI images
+    # only NYUAD catches have the SAME signature (SPAI low, NYUAD high), so
+    # no rule over these two numbers can separate them.
+    #
+    # Measured, real FusionEngine, 60 images:
+    #     policy                                fakeTRUST  realFALSEALARM
+    #     as shipped (SPAI low AND NYUAD low)         3/30        12/30
+    #     agreement-only (both must say real)         3/30        12/30
+    #     SPAI-only veto (ignore NYUAD)              11/30         7/30
+    #     NYUAD-only veto (ignore SPAI)              15/30         5/30
+    #     either-low (a veto needs BOTH to flag)     23/30         0/30
+    #
+    # "Agreement only" is IDENTICAL to the shipped policy (both-must-say-real
+    # IS SPAI low AND NYUAD low), and every policy that actually reduces the
+    # false alarms costs 8, 12 and then 20 false-cleans. The false-clean is
+    # the more dangerous direction -- it tells the user "this AI image is
+    # genuine". Separating the two groups needs a THIRD signal (a model with
+    # non-overlapping errors, a provenance check, or a content check), not a
+    # re-arbitration of these two.
+    # See tests/test_63_image_arbitration.py.
     ny = by_name.get("nyuad_image_detector")
     if ny is not None and ny.usable():
         ny_p = ny.signals.get("prob_deepfake", 1.0)
