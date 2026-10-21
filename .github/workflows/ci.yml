@@ -30,12 +30,17 @@ name: ci
     branches: [master, main]
   pull_request:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  probe:
+  test-bare:
+    name: hermetic suite (bare env, py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
     steps:
-      - run: echo "probe concurrency block"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: echo "probe matrix job"
