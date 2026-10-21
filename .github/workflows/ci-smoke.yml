@@ -1,0 +1,16 @@
+name: ci-smoke
+
+# A MINIMAL workflow, used only to prove whether GitHub Actions executes
+# anything at all on this repository. If this one also fails in 0 s with
+# "This run likely failed because of a workflow file issue", the problem is
+# repo-level (Actions disabled / billing / plan) and NOT the ci.yml content.
+"on":
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "actions are executing on this repo"
