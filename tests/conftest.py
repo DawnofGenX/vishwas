@@ -18,9 +18,28 @@ os.environ.setdefault("VISHWAS_AUDIT_LOG", str(_ROOT / ".test-quarantine" / "aud
 os.environ.setdefault("VISHWAS_STALE_TTL_S", "7200")
 sys.path.insert(0, str(_ROOT / "src"))
 
+# Export PYTHONPATH as well as inserting into sys.path. `sys.path` only
+# affects THIS process; the fusion_train tests spawn a SUBPROCESS
+# (`python -m vishwas.fusion_train`) that inherits os.environ, and without
+# PYTHONPATH the child cannot import vishwas and the test fails with
+# "No module named 'vishwas'". pytest has no built-in way to set an env var
+# (that needs the pytest-env plugin), so it is done here.
+_SRC = str(_ROOT / "src")
+_pp = os.environ.get("PYTHONPATH", "")
+if _SRC not in _pp.split(os.pathsep):
+    os.environ["PYTHONPATH"] = _SRC + (os.pathsep + _pp if _pp else "")
+
 # Local dependency library (trimmed asn1crypto for the PAdES/CMS stage).
 # APPEND (not insert): keeps existing resolution for every already-importable
 # module; only un-resolved names (asn1crypto) fall through here.
+#
+# WARNING (2026-10-21): this APPEND is safe for the hermetic suite (which
+# never imports transformers) but it is NOT safe for the SERVING stack. The
+# pylibs tree ships cryptography v50, which no longer provides the `lib`
+# submodule pyOpenSSL imports; Python then resolves `lib` to a top-level
+# namespace package (llama_cpp_python's site-packages/lib) and the whole
+# accelerate/transformers import chain dies. The service therefore runs under
+# its own venv with no pylibs on the path — see scripts/run_vishwas.sh.
 _PYLIBS = Path.home() / "pylibs"
 if _PYLIBS.is_dir() and str(_PYLIBS) not in sys.path:
     sys.path.append(str(_PYLIBS))

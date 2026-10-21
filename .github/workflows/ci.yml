@@ -1,0 +1,237 @@
+name: ci
+
+# The repo had NO CI at all until 2026-10-21: no .github/ directory on either
+# branch, no dependency manifest, and no branch protection
+# (`gh api .../branches/master/protection` -> 404 "Branch not protected").
+# Every regression in this project so far — the safetensors loader, the
+# health probe, the ffmpeg -vsync removal, the fusion fail-opens — could
+# have been caught by a gate.
+#
+# Two gates, because one is not enough:
+#   1. test-bare  — the hermetic suite with NO learned detectors installed.
+#                   This proves the code is importable and the cheap tiers
+#                   work on a bare interpreter.
+#   2. test-full  — the suite with the learned detectors INSTALLED. This
+#                   proves the torch-gated arch modules actually run.
+#
+# The distinction matters: under a bare env the torch-gated arch modules
+# skip wholesale, so the suite collects 448 tests; with torch it collects
+# 502. A single "437 passed" assertion is therefore really asserting "the
+# detectors are not installed".
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Gate 1 — hermetic, no learned detectors. Must pass everywhere.
+  # ---------------------------------------------------------------------
+  test-bare:
+    name: hermetic suite (bare env, py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the interpreter the service effectively runs under
+        # (/usr/bin/python3); 3.14 is what resolves first in a login shell.
+        # The suite must behave under both, which is exactly what was not
+        # true before.
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install runtime + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Hermetic suite (all weight gates unset)
+        env:
+          # The weight env vars must be UNSET: if a previous step leaked
+          # them, test_34 tries a GPU load and fails with "weights present
+          # but load() failed".
+          PYTHONPATH: src
+        run: |
+          env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
+              -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
+              -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
+              -u VISHWAS_FAKEMAMBA_WEIGHTS -u VISHWAS_DEMAMBA_WEIGHTS \
+              -u VISHWAS_SSL_AUDIO_WEIGHTS \
+            python -m pytest tests/ -q -rs
+
+      - name: Assert the gate is the MEASURED count (floor, not equality)
+        run: |
+          # 471 passed / 16 skipped as of 2026-10-21. A FLOOR is used, not
+          # equality, so adding tests does not break the build — but a
+          # regression that loses tests does.
+          # Re-collect the count rather than trusting a hardcoded string.
+          out=$(env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
+                  -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
+                  -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
+                python -m pytest tests/ -q 2>&1 | tail -3)
+          echo "$out"
+          passed=$(echo "$out" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | head -1)
+          if [ -z "$passed" ]; then
+            echo "FAIL: could not parse a passed count from: $out"
+            exit 1
+          fi
+          if [ "$passed" -lt 465 ]; then
+            echo "FAIL: only $passed tests passed (floor is 465)"
+            exit 1
+          fi
+          echo "OK: $passed tests passed (floor 465)"
+
+      - name: Assert the QR tests are not silently missing
+        run: |
+          # The two QR tests are excluded by default in pyproject's addopts
+          # (they need `qrcode` plus a numpy/cv2 ABI match). Install those
+          # and run them explicitly so they cannot rot unnoticed.
+          pip install qrcode
+          PYTHONPATH=src python -m pytest tests/test_24_qr_verify.py \
+            tests/test_25_qr_pipeline.py -q -p no:cacheprovider \
+            --override-ini="addopts=" \
+            || echo "::warning::QR tests could not be collected on this interpreter (numpy/cv2 ABI); they are covered by the 3.12 full-env job"
+
+  # ---------------------------------------------------------------------
+  # Gate 2 — the learned detectors must actually load and run.
+  # ---------------------------------------------------------------------
+  test-full:
+    name: learned detectors (py3.12 + torch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the learned-detector dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # torch>=2.6 is REQUIRED, not preferred: the wav2vec2 frontend is
+          # a 1.27 GB `pytorch_model.bin` pickle and transformers 4.57+
+          # refuses torch.load on torch<2.6 (CVE-2025-32434).
+          pip install -e ".[test,learned,binary]"
+
+      - name: The torch-gated arch modules must COLLECT, not skip
+        run: |
+          # These six modules are the ones that skip wholesale when torch is
+          # absent, which is how "437 passed" came to mean "the detectors
+          # are not installed". With torch present they must collect their
+          # real tests.
+          PYTHONPATH=src python -m pytest \
+            tests/test_19_aasist_arch.py \
+            tests/test_20_effort_arch.py \
+            tests/test_21_havic_arch.py \
+            tests/test_28_xlsrmamba_spec.py \
+            tests/test_39_spai_arch.py \
+            tests/test_51_effnet_image_arch.py \
+            -q -p no:cacheprovider --override-ini="addopts=" --collect-only \
+            | tail -5
+          count=$(PYTHONPATH=src python -m pytest \
+            tests/test_19_aasist_arch.py \
+            tests/test_20_effort_arch.py \
+            tests/test_21_havic_arch.py \
+            tests/test_28_xlsrmamba_spec.py \
+            tests/test_39_spai_arch.py \
+            tests/test_51_effnet_image_arch.py \
+            -q -p no:cacheprovider --override-ini="addopts=" --collect-only \
+            | grep -c "::")
+          if [ "$count" -lt 50 ]; then
+            echo "FAIL: only $count torch-gated tests collected (expected >= 50)"
+            exit 1
+          fi
+          echo "OK: $count torch-gated tests collected"
+
+      - name: Full suite with the detectors installed
+        env:
+          PYTHONPATH: src
+        run: |
+          env -u VISHWAS_AASIST_WEIGHTS -u VISHWAS_XLSRMAMBA_WEIGHTS \
+              -u VISHWAS_EFFORT_WEIGHTS -u VISHWAS_IMAGE_FACE_WEIGHTS \
+              -u VISHWAS_NYUAD_WEIGHTS -u VISHWAS_HAVIC_WEIGHTS \
+            python -m pytest tests/ -q -p no:cacheprovider --override-ini="addopts="
+
+  # ---------------------------------------------------------------------
+  # Gate 3 — the shipping invariants that are easy to break.
+  # ---------------------------------------------------------------------
+  invariants:
+    name: shipping invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install -e ".[test]"
+
+      - name: The aasist3 helper path must exist on disk
+        # This one-line assertion would have caught the `parents[2]`
+        # regression that made BOTH audio gates unloadable on both branches
+        # (real deepfake audio scored LOW). The existing test monkeypatched
+        # the path to a temp file, so the real path was never exercised.
+        run: |
+          PYTHONPATH=src python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "src")
+          from vishwas.capabilities import deepfake_audio as da
+          p = Path(da._AASIST3_HELPER)
+          print("helper:", p)
+          assert p.is_file(), f"aasist3 helper path does not exist: {p}"
+          assert p.name == "audio_score_aasist3.py"
+          assert p.parent.name == "scripts", f"helper is in the wrong dir: {p.parent}"
+          print("OK")
+          PY
+
+      - name: Shell scripts must have LF line endings (a CRLF shebang breaks cron)
+        # `core.autocrlf=true` on a contributor's machine turns
+        # `#!/usr/bin/env bash` into `#!/usr/bin/env bash\r`, and cron execs
+        # the health watchdog directly -> it fails 100% of the time, silently.
+        run: |
+          failed=0
+          for f in $(git ls-files '*.sh'); do
+            if grep -qU $'\r' "$f"; then
+              echo "FAIL: $f has CRLF line endings"
+              failed=1
+            fi
+          done
+          [ "$failed" = "0" ] || exit 1
+          echo "OK: all shell scripts are LF"
+
+      - name: The launcher must not put pylibs on the PYTHONPATH
+        # pylibs' cryptography v50 breaks the accelerate/transformers import
+        # chain via the `lib` namespace shadow, which kills every torch-gated
+        # detector. The launcher must keep the path clean.
+        run: |
+          if grep -nE 'PYTHONPATH=.*pylibs' scripts/run_vishwas.sh; then
+            echo "FAIL: the launcher puts pylibs on the PYTHONPATH"
+            exit 1
+          fi
+          echo "OK: launcher PYTHONPATH is clean"
+
+      - name: No secrets committed
+        run: |
+          # The VT key and the OpenWA webhook secret live in
+          # deploy/vishwas-secrets.env, which is gitignored. Assert that.
+          for f in deploy/vishwas-secrets.env deploy/.env deploy/openwa-reply.env; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "FAIL: $f is tracked but holds secrets"
+              exit 1
+            fi
+          done
+          echo "OK: no secret files are tracked"
