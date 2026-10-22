@@ -82,6 +82,66 @@ def _genimage_path() -> Path:
     return Path(os.environ.get(_GENIMAGE_ENV, _GENIMAGE_DEFAULT))
 
 
+# ⚠️ THE MODEL CACHE (2026-10-22). The genimage checkpoint used to be
+# rebuilt and reloaded for EVERY image (the `spec.build()` + `torch.load()`
+# were inside `_genimage_prob`). That is the same defect PR #28 fixed in
+# the AUDIO lane, where aasist3 reloaded once per crop and pushed the
+# audio lane past its budget.
+#
+# The cache is keyed on the checkpoint PATH (a different checkpoint must
+# never serve a stale model), it is BOUNDED, and a FAILED load is NOT
+# cached (a checkpoint provisioned later must be picked up, not
+# permanently poisoned by an earlier failure).
+_GENIMAGE_MODEL_CACHE: dict = {}
+_GENIMAGE_MODEL_CACHE_MAX = 4
+
+
+def _genimage_model(path: Path):
+    """Build the genimage model ONCE per checkpoint path and reuse it.
+
+    ⚠️ THIS WAS A PER-CALL MODEL BUILD (2026-10-22). `_genimage_prob`
+    called `spec.build()` and `torch.load()` INSIDE itself, so EVERY image
+    reloaded the checkpoint. That is the same defect PR #28 fixed in the
+    AUDIO lane (where aasist3 reloaded once per crop and pushed the lane
+    past its budget) — the image lane had the identical shape, unfixed.
+
+    The cache is keyed on the checkpoint PATH (so a different checkpoint
+    never serves a stale model), it is BOUNDED (one entry per distinct
+    path, capped), and a FAILED load is NOT cached — a checkpoint that is
+    provisioned later must be picked up, not permanently poisoned by the
+    failure that preceded it.
+    """
+    key = str(path)
+    cached = _GENIMAGE_MODEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from ..model_archs.effort import get_arch
+    spec = get_arch()
+    model = spec.build()
+    import torch
+
+    sd = torch.load(str(path), map_location="cpu", weights_only=False)
+    if isinstance(sd, dict) and "state_dict" in sd:
+        sd = sd["state_dict"]
+    if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
+        sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+    if not spec.apply_state(model, sd):
+        return None
+    model.eval()
+    dev = resolve_device()
+    model.to(dev)
+    # ⚠️ THE DEVICE IS STORED SEPARATELY. The arch's `_EffortNet` is a
+    # plain nn.Module wrapper and has no `.device` attribute, so the
+    # device the model was moved to must be remembered alongside it —
+    # `next(model.parameters()).device` would work, but keeping the
+    # resolved device is explicit and avoids a parameter scan per image.
+    entry = (model, dev)
+    if len(_GENIMAGE_MODEL_CACHE) >= _GENIMAGE_MODEL_CACHE_MAX:
+        _GENIMAGE_MODEL_CACHE.clear()
+    _GENIMAGE_MODEL_CACHE[key] = entry
+    return entry
+
+
 def _genimage_prob(img: np.ndarray | None) -> float | None:
     """Score one image with the genimage (general-AIGC) EFFORT checkpoint.
 
@@ -100,23 +160,11 @@ def _genimage_prob(img: np.ndarray | None) -> float | None:
     if not path.exists():
         return None
     try:
-        from ..model_adapters import resolve as _resolve
-        from ..model_archs.effort import get_arch
-
-        spec = get_arch()
-        model = spec.build()
-        import torch
-
-        sd = torch.load(str(path), map_location="cpu", weights_only=False)
-        if isinstance(sd, dict) and "state_dict" in sd:
-            sd = sd["state_dict"]
-        if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
-            sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
-        if not spec.apply_state(model, sd):
+        entry = _genimage_model(path)
+        if entry is None:
             return None
-        model.eval()
-        dev = resolve_device()
-        model.to(dev)
+        model, dev = entry
+        import torch
 
         chw = _preprocess_chw(img)
         x = torch.from_numpy(chw).unsqueeze(0).to(dev)
@@ -129,6 +177,8 @@ def _genimage_prob(img: np.ndarray | None) -> float | None:
     except Exception as exc:  # noqa: BLE001
         log.warning("genimage scoring failed (%s: %s) — third image signal unavailable",
                     type(exc).__name__, exc)
+        # A FAILURE IS NOT CACHED: the checkpoint may be provisioned later,
+        # and a cached failure would be permanent.
         return None
 
 
