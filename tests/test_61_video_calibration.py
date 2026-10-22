@@ -297,13 +297,59 @@ def test_operator_real_clips_never_read_do_not_use():
 # 6. The ANTI-CORRELATED band must still fire on the operator's AI videos.
 # ---------------------------------------------------------------------------
 def test_anti_correlated_av_still_flags_a_generated_video():
-    """The corroboration gate discounts the DECORRELATED band (0.45). The
-    ANTI-CORRELATED band (0.5) must NOT be discounted — it is the genuine
-    deepfake signature: the operator's own 3 AI anchor videos all read 0.5,
-    while all 4 genuine operator clips read 0.0/0.1.
+    """A CORROBORATED fake must still read DO_NOT_USE.
 
-    A gate that suppressed this band too would make the video channel
-    permanently silent on exactly the content it exists to catch."""
+    2026-10-22 — THE PREMISE OF THIS TEST WAS DISPROVEN BY MEASUREMENT, AND
+    THE CONTRACT WAS REWRITTEN.
+
+    The original version of this test asserted that the ANTI-CORRELATED band
+    (0.5) must NOT be discounted by the corroboration gate, on the grounds
+    that "the operator's own 3 AI anchor videos all read 0.5, while all 4
+    genuine operator clips read 0.0/0.1" -- i.e. that 0.5 was a DISCRIMINATOR
+    between the operator's fakes and the operator's reals.
+
+    That was FALSE. The 0.5 readings were the -2.0 SENTINEL of the
+    correlation function -- the operator's AI videos have a completely SILENT
+    audio track (RMS 0.0), so their correlation was UNDEFINED. And on the
+    operator's real WhatsApp traffic, 12% of genuine video (9 of 74 clips)
+    has the same all-zero audio track, so 0.5 does not discriminate at all:
+    it means "no speech energy", not "independently generated modalities".
+
+    So the gate now treats BOTH elevated bands the same way: an elevated
+    cross-modal reading may CORROBORATE a video-side signal but may never
+    CARRY the verdict on its own.
+
+    What is pinned here now is the guarantee that actually matters: a fake
+    whose video-side signals AGREE with the cross-modal reading still reads
+    DO_NOT_USE. The video-side signals below are STRONG — effort 0.844
+    calibrates to 0.444, which is ABOVE the 0.40 gate threshold — so the
+    elevated cross-modal reading corroborates rather than carries.
+    """
+    checks = [
+        C("effort_face_forensics", "heavy", "ok", {"prob_deepfake": 0.844}, "m"),
+        C("frame_heuristics", "mid", "ok", {"prob_deepfake": 0.281}, "m"),
+        C("cross_modal_av", "heavy", "ok",
+          {"av_risk_addition": 0.5, "alignment_class": "anti_correlated",
+           "av_correlation": -0.3, "av_synced_clean": 0.0}, "m"),
+        C("havic_crossmodal_model", "heavy", "ok", {"prob_inconsistent": 0.997}, "m"),
+    ]
+    d = fe.decide("deepfake_video", checks)
+    assert d.verdict is Verdict.DO_NOT_USE, (
+        f"a corroborated generated video read {d.verdict.value} "
+        f"(score={d.score:.3f}) — the corroboration gate suppressed the "
+        "genuine deepfake signature")
+
+
+def test_uncorroborated_elevated_av_does_not_decide_the_verdict():
+    """The clean-side guarantee of the 2026-10-22 widening.
+
+    A clip with a REAL anti-correlation but only WEAK video-side signals
+    (effort calibrated 0.144, frameheur 0.272) must not be pushed to
+    DO_NOT_USE by the cross-modal reading alone. This is the case the old
+    asymmetric gate got wrong: it trusted the 0.5 band unconditionally, so
+    a genuine MUTED clip (12% of real WhatsApp video) could reach DNU on
+    silence alone.
+    """
     checks = [
         C("effort_face_forensics", "heavy", "ok", {"prob_deepfake": 0.544}, "m"),
         C("frame_heuristics", "mid", "ok", {"prob_deepfake": 0.272}, "m"),
@@ -313,10 +359,9 @@ def test_anti_correlated_av_still_flags_a_generated_video():
         C("havic_crossmodal_model", "heavy", "ok", {"prob_inconsistent": 0.997}, "m"),
     ]
     d = fe.decide("deepfake_video", checks)
-    assert d.verdict is Verdict.DO_NOT_USE, (
-        f"an anti-correlated generated video read {d.verdict.value} "
-        f"(score={d.score:.3f}) — the corroboration gate suppressed the "
-        "genuine deepfake signature")
+    assert d.verdict is not Verdict.DO_NOT_USE, (
+        f"an UNCORROBORATED elevated cross-modal reading decided the verdict: "
+        f"{d.verdict.value} (score={d.score:.3f})")
 
 
 def test_synced_av_with_low_video_signals_is_not_do_not_use():
