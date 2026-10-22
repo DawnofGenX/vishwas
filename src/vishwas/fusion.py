@@ -133,6 +133,25 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # longer able to carry the verdict on its own. The
         # `_av_corroborated` gate below additionally requires the VIDEO-side
         # signals to agree before a decorrelated reading can dominate.
+        #
+        # 2026-10-22 — THE 0.5 BAND WAS NEVER A DEEPFAKE SIGNATURE.
+        # Measured on the operator's REAL WhatsApp traffic (67 clips from 5
+        # correspondents, original audio):
+        #   * the operator's 3 AI videos have a COMPLETELY SILENT audio track
+        #     (RMS 0.0), so their av reading was the correlation function's
+        #     UNDEFINED sentinel, not a correlation. It is now reported as
+        #     "unknown" with a neutral 0.0 (see cross_modal.py).
+        #   * 12% of genuine WhatsApp video (9 of 74 clips) has the same
+        #     all-zero audio track and was being reported the same way.
+        #   * of the 63 genuine clips WITH audible audio, only 2 reach the
+        #     0.5 band at all (3%), with real correlations of -0.299/-0.443.
+        #   * HAVIC is saturated on genuine traffic: >= 0.95 on 42 of 63
+        #     genuine clips (median 0.980), versus 0.995 on the AI videos.
+        #     It does not discriminate.
+        # So the av 0.5 band means "no speech energy", and the corroboration
+        # gate below now treats the 0.45 and 0.5 bands IDENTICALLY: an
+        # elevated cross-modal reading may corroborate a video-side signal
+        # but may never carry the verdict by itself.
         "av_risk_addition": 1.5,
         "havic.prob_inconsistent": 0.8,
     },
@@ -868,33 +887,33 @@ class FusionEngine:
 
         x = s / total_w if total_w > 0 else 0.0
 
-        # CROSS-MODAL CORROBORATION GATE (2026-10-21). av_risk_addition is a
-        # DISCRETE band reading, not a probability:
+        # CROSS-MODAL CORROBORATION GATE (2026-10-21, widened 2026-10-22).
+        # av_risk_addition is a DISCRETE band reading, not a probability:
         #     0.0  synced            (lip motion and speech energy agree)
         #     0.1  weakly_synced     (moderate coherence)
         #     0.45 decorrelated     (envelopes uncorrelated — ambiguous)
-        #     0.5  anti_correlated  (envelopes move OPPOSITE — the signature
-        #                             of independently generated modalities)
+        #     0.5  anti_correlated  (envelopes move OPPOSITE)
+        #     0.0  unknown           (the correlation could not be measured)
         #
-        # The two elevated bands are NOT equally trustworthy:
+        # 2026-10-22: this gate used to treat the two elevated bands
+        # ASYMMETRICALLY -- 0.45 was discounted (a mux artefact) but 0.5 was
+        # TRUSTED as "the deepfake signature". That asymmetry was based on a
+        # measurement that has since been shown to be WRONG.
         #
-        #  * ANTI_CORRELATED (0.5) is the genuine deepfake signature. The
-        #    operator's own 3 AI anchor videos all read 0.5, and all 4
-        #    genuine operator clips read 0.0/0.1. It is also physically
-        #    hard to produce by accident: a recording artefact or a bad mux
-        #    makes the envelopes uncorrelated (0.45), it does not make them
-        #    move in OPPOSITE directions.
+        # The 0.5 readings were the -2.0 SENTINEL of the correlation
+        # function, not a correlation: the operator's own AI videos have a
+        # COMPLETELY SILENT audio track (RMS 0.0), so their correlation was
+        # undefined. And measured on 67 genuine WhatsApp videos, 9 of them
+        # (13%) have the same all-zero audio track and were reported the same
+        # way. So 0.5 meant "no speech energy", not "independently generated
+        # modalities" -- and it fired on genuine muted clips as readily as on
+        # generated ones.
         #
-        #  * DECORRELATED (0.45) is AMBIGUOUS. It is what a transcode, a
-        #    re-encode, a different capture device, or a mux from another
-        #    source produces. On the leak-free corpus it fired on 2/30
-        #    genuine clips and 4/30 fakes — so on its own it is close to a
-        #    coin flip.
-        #
-        # So the elevated cross-modal reading may CORROBORATE a video-side
-        # signal but may not carry the verdict by itself, EXCEPT when it is
-        # anti-correlated. Measured before this gate: 2/30 genuine clips read
-        # DO_NOT_USE with av_risk supplying 54% and 79% of the score.
+        # So the gate now treats BOTH elevated bands the same way: an
+        # elevated cross-modal reading may CORROBORATE a video-side signal
+        # but may never CARRY the verdict by itself. The cross-modal check is
+        # evidence about consistency, and consistency alone is not evidence
+        # of synthesis.
         #
         # THE GATE THRESHOLD (0.40) IS DELIBERATE AND IT IS THE HONEST LIMIT
         # OF THIS DATASET. On the leak-free corpus the two genuine clips that
@@ -905,19 +924,17 @@ class FusionEngine:
         # A 0.003 difference. No threshold on these signals can separate them.
         # So a threshold that keeps the fakes MUST keep real_006 too. The
         # gate threshold is therefore set ABOVE the genuine clips'
-        # calibrated effort (0.374) so the decorrelated band cannot decide a
-        # verdict on its own — accepting that 3 of the 4 decorrelated-band
-        # fakes are then missed. Those 3 fakes are caught by the ANTI-
-        # CORRELATED band in production (the operator's own AI videos all
-        # read av=0.5, not 0.45), which this gate does not touch.
+        # calibrated effort (0.374) so an elevated cross-modal reading
+        # cannot decide a verdict on its own.
         #
         # The gate is deliberately one-directional: it can only REDUCE risk
         # when the cross-modal signal fires alone. A corroborated fake (high
-        # EFFORT + anti-correlated AV) still reaches DO_NOT_USE — the gate
-        # removes the false positive, it never disarms the detector.
+        # EFFORT + an elevated cross-modal reading) still reaches
+        # DO_NOT_USE -- the gate removes the false positive, it never
+        # disarms the detector.
         if target == "deepfake_video":
             _av = _probe(by_name, "cross_modal_av", "av_risk_addition", 0.0)
-            if isinstance(_av, (int, float)) and 0.45 <= _av < 0.50:
+            if isinstance(_av, (int, float)) and _av >= 0.45:
                 _eff_raw = _probe(by_name, "effort_face_forensics", "prob_deepfake", 0.0)
                 _fh_raw = _probe(by_name, "frame_heuristics", "prob_deepfake", 0.0)
                 # The video-side signals must CORROBORATE. Their calibrated
