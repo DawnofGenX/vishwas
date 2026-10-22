@@ -96,6 +96,12 @@ def keys():
     """
     import shutil
     import tempfile
+    # The prefix is also the HARNESS CONTRACT: `tests/test_76_gpg_no_leak.py`
+    # identifies this run's keyring tree by that prefix, and the mutation
+    # harnesses in ~/.hermes/cache/scratch/ run a DELIBERATELY BROKEN copy
+    # of this fixture -- which leaks a tree by design. Naming it distinctly
+    # (rather than as a generic tmp dir) is what lets the end-to-end test
+    # tell "this run leaked" from "something else left one behind".
     base = Path(tempfile.mkdtemp(prefix="vishwas-gpg-test-"))
     h1 = base / "home1"
     h2 = base / "home2"

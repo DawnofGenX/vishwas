@@ -48,7 +48,25 @@ import subprocess
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 GPG_TEST = REPO / "tests" / "test_15_gpg.py"
-SCRATCH = pathlib.Path("/home/hermes/.hermes/cache/scratch")
+
+# ⚠️ THE TEMP ROOT MUST BE RESOLVED, NOT HARDCODED (2026-10-22).
+# This originally hardcoded `/home/hermes/.hermes/cache/scratch`, but
+# `tempfile.mkdtemp()` uses `tempfile.gettempdir()`, which HONOURS
+# `$TMPDIR`. So the test was looking in the wrong place whenever TMPDIR
+# pointed elsewhere -- and it looked in the right place only by accident.
+#
+# The mutation harness found this: isolating the harness's TMPDIR (so a
+# deliberately-broken fixture cannot pollute the real scratch dir) made
+# the tree-leak check silently stop detecting anything.
+#
+# This is the SAME class as PR #23's hardcoded interpreter: a path that
+# is right on the developer machine and wrong everywhere else.
+def _temp_root() -> pathlib.Path:
+    import tempfile
+    return pathlib.Path(tempfile.gettempdir())
+
+
+SCRATCH = _temp_root()
 
 
 def _src() -> str:
