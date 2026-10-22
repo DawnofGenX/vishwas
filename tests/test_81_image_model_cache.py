@@ -90,3 +90,42 @@ def test_the_cache_is_bounded():
     assert re.search(r"if len\(.*cache.*\)\s*>|MAX_CACHE|_CACHE_MAX", src), (
         "the model cache is unbounded — it would grow one entry per "
         "distinct checkpoint path for the life of the process")
+
+
+def test_the_spai_path_is_also_cached():
+    """The SPAI path has the SAME per-image reload as the genimage path.
+
+    `_load_model()` is called once per image by the SPAI path, and it used
+    to call `adapter.load(p)` / `torch.load(p)` every time. PR #31 fixed
+    genimage; the SPAI path was the same shape and was left behind.
+
+    ⇒ A FIX IN ONE LANE IS NOT A FIX IN THE NEXT. This test is here so
+    the same shape cannot come back in a third place.
+    """
+    src = _src()
+    m = re.search(r"def _load_model\(.*?\n(?=\ndef |\nclass )", src, re.S)
+    assert m, "the face-model loader is gone"
+    body = m.group(0)
+    # The legacy fallback legitimately still calls `torch.load` — it has
+    # to, to load the checkpoint. What must NOT happen is that the load
+    # be reached on EVERY call: the cached path must RETURN before it.
+    if "torch.load(" in body:
+        # the load must be guarded by the cache lookup
+        cache_read = body.find("_FACE_MODEL_CACHE")
+        load_at = body.find("torch.load(")
+        assert cache_read != -1 and cache_read < load_at, (
+            "_load_model reaches `torch.load` without first consulting the "
+            "cache, so the SPAI path reloads the checkpoint for every "
+            "image — the same defect PR #31 fixed for genimage")
+    assert re.search(r"_FACE_MODEL_CACHE", src), (
+        "the face-model loader has no cache, so every image reloads the "
+        "SPAI checkpoint")
+    assert re.search(r"key\s*=\s*str\(p\)", body), (
+        "the face-model cache is not keyed on the checkpoint path, so a "
+        "different checkpoint would serve a stale model")
+    assert re.search(r"_FACE_MODEL_CACHE\[key\]\s*=", body), (
+        "the face-model cache is not written under the path-derived key")
+    # a failure must not be cached
+    assert re.search(r"if obj is None:.*?return None", body, re.S), (
+        "a FAILED face-model load appears to be cached, so a checkpoint "
+        "that is provisioned later would never be picked up")
