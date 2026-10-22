@@ -148,10 +148,30 @@ WEIGHTS: dict[str, dict[str, float]] = {
         #   * HAVIC is saturated on genuine traffic: >= 0.95 on 42 of 63
         #     genuine clips (median 0.980), versus 0.995 on the AI videos.
         #     It does not discriminate.
+        #   * the 0.45 (decorrelated) band is reached by 3 of the 63 genuine
+        #     clips, with real correlations of 0.105 / -0.13 / 0.016.
         # So the av 0.5 band means "no speech energy", and the corroboration
         # gate below now treats the 0.45 and 0.5 bands IDENTICALLY: an
         # elevated cross-modal reading may corroborate a video-side signal
         # but may never carry the verdict by itself.
+        #
+        # ⚠️ THE "(av=0.5 AND havic) PAIR RULE" WAS MEASURED AND REJECTED.
+        # It is superficially attractive -- it is a CROSS-MODAL-ONLY rule, so
+        # it needs no video-side signal, and it is exactly the shape of the
+        # old (wrong) belief that "anti-correlated IS the deepfake
+        # signature". Measured on the operator's real traffic:
+        #     the 2 genuine av=0.5 clips BOTH have high HAVIC
+        #       c1dfce01  corr=-0.299  havic=0.983
+        #       b10342bc  corr=-0.443  havic=0.980
+        #     so the pair fires on 2 of 63 genuine clips (3% FALSE POSITIVES)
+        #   and it catches 0 of the 3 AI videos, because their av reading is
+        #     0.0 (unknown -- silent audio), so the pair never fires for them.
+        # => IT COSTS 3% GENUINE FALSE POSITIVES AND BUYS NOTHING. Rejected
+        #    on measurement. Do not propose it.
+        #    Re-measure with tools/measure_crossmodal_pair_rule.py, which
+        #    DERIVES both denominators (the clips with an audio stream, and
+        #    the AI anchors it actually scanned) and stamps the tree it ran
+        #    against -- so the numbers above can be re-checked, not trusted.
         "av_risk_addition": 1.5,
         "havic.prob_inconsistent": 0.8,
     },
