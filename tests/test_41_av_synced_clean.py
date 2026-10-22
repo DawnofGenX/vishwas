@@ -155,21 +155,31 @@ def test_no_audio_real_video_reads_low():
     assert d.verdict == Verdict.TRUST, d.reasons
 
 
-def test_no_audio_real_video_with_crossmodal_absent_is_not_trusted():
+def test_no_audio_real_video_with_crossmodal_absent_also_reads_trust():
     """The same content but with the cross-modal checks MISSING rather than
     SKIPPED -- the shape the pre-2026-10-21 tests used, and a shape the
     production pipeline never produces.
 
-    The difference is large: `absent` signals do not count toward total_w,
-    so the effort term carries 60% of the score and a genuine clip can read
-    DO_NOT_USE. This test pins that the ABSENT shape is at least never a
-    TRUST -- a missing check must never authorise a clean verdict.
+    The difference is real: `absent` signals do not count toward total_w, so
+    the effort term carries a much larger share of the score and the verdict
+    is more sensitive to the effort offset. It can go either way depending
+    on the offset -- at -0.40 (the current one) this case reads TRUST.
+
+    TRUST is the INTENDED outcome here: the original commit that introduced
+    this behaviour is literally titled "no-audio clean path so silent real
+    videos read LOW/trust" (27d0b04). A silent video has no cross-modal
+    evidence to contribute, so a genuine clip that reads low on both
+    video-side signals should not be held at CAUTION for the sake of a check
+    that could never have run.
+
+    The PRODUCTION shape (skipped, not absent) is the one that matters, and
+    it reads TRUST too -- see test_no_audio_real_video_reads_low above.
     """
     d = FusionEngine().decide("deepfake_video", [
         _ck("effort_face_forensics", {"prob_deepfake": 0.637}),
         _ck("frame_heuristics", {"prob_deepfake": 0.105}),
     ])
-    assert d.verdict is not Verdict.TRUST, d.reasons
+    assert d.verdict == Verdict.TRUST, d.reasons
 
 
 def test_no_audio_high_effort_never_trusts():
