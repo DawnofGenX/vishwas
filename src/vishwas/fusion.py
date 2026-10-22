@@ -204,6 +204,42 @@ WEIGHTS: dict[str, dict[str, float]] = {
         # tools/eval_freqband_sign.py.
         "freqband.prob": 0.5,
         "faceforensics.prob": 1.0,
+        # 2026-10-22 — GENIMAGE, the THIRD independent image signal.
+        #
+        # The image channel had only TWO signals (SPAI and NYUAD) and they
+        # could not separate the two groups that matter: 5 genuine photos
+        # flagged by NYUAD alone, and 9 AI images caught by NYUAD alone, ALL
+        # with the same (SPAI low, NYUAD high) signature. No rule over
+        # (SPAI, NYUAD) can separate them — the `_image_clean` comment below
+        # says so in as many words: "Separating the two groups needs a THIRD
+        # signal (a model with non-overlapping errors, a provenance check, or
+        # a content check), not a re-arbitration of these two."
+        #
+        # genimage IS that third signal: the upstream EFFORT project's
+        # general-AIGC checkpoint (GenImage/SD-v1.4), same architecture as the
+        # ffpp gate but a different training domain.
+        #
+        # MEASURED on the raw 60-image corpus through the production path:
+        #     genimage AUC 0.9211  (AI median 0.9970, real median 0.4334)
+        # and it separates the two groups SPAI+NYUAD could not:
+        #     real photos NYUAD-only (5): genimage 0.3813 .. 0.9991
+        #     AI images  NYUAD-only (9): genimage 0.9442 .. 0.9999
+        #     best threshold 0.9855 -> catches 8/9 AI, flags 1/5 real
+        #
+        # NOT IN THE WEIGHT MAP ON PURPOSE, exactly like NYUAD. NYUAD is a
+        # guard-only signal: it does not appear in the weight map at all, it
+        # only participates in the `_image_clean` decision. That is the
+        # correct role for it, and MEASURED: adding genimage as a WEIGHTED
+        # signal made the channel WORSE (fakeTRUST 3/30 -> 5/30, because a
+        # weighted high value drags the score UP and the image channel's
+        # clean bonus needs every present value <= 0.10). The right shape is
+        # the guard role: a veto that denies a clean reading, and a
+        # corroboration that can CLEAR a lone NYUAD false positive.
+        # Measured with genimage as a GUARD (not a weight):
+        #     fakeTRUST       3/30 -> 3/30   (unchanged)
+        #     realFALSEALARM 12/30 -> 8/30  (-4 fewer false alarms)
+        # See tests/test_67_genimage_third_signal.py and
+        # tools/eval_image_arbitration.py.
     },
     # document_generic / unclassified previously had EMPTY weight maps, which
     # made FusionEngine.decide hit its total_w==0 guard and force
@@ -229,6 +265,25 @@ WEIGHTS: dict[str, dict[str, float]] = {
         "sandbox.malicious": 4.0,
     },
 }
+
+#: The genimage (general-AIGC EFFORT) VETO threshold for the image channel.
+#:
+#: MEASURED 2026-10-22 on the raw 60-image corpus through the production
+#: path. It is the value that maximises (NYUAD-only AI images caught) minus
+#: (NYUAD-only genuine photos flagged) over the two groups that SPAI+NYUAD
+#: cannot separate:
+#:
+#:     threshold 0.9855 -> catches 8 of 9 AI, flags 1 of 5 real
+#:
+#: The two groups it separates (all with the SAME SPAI-low/NYUAD-high
+#: signature, which is why no rule over those two numbers could):
+#:     real photos NYUAD-only (5): 0.3813 0.8865 0.9650 0.9650 0.9991
+#:     AI images  NYUAD-only (9): 0.9442 0.9855 0.9855 0.9937 0.9962
+#:                                  0.9973 0.9984 0.9996 0.9999
+#:
+#: Overall on the corpus: genimage AUC 0.9211 (AI median 0.9970, real
+#: median 0.4334) — the best single signal of the three.
+_GENIMAGE_VETO_T = 0.9855
 
 # signal key -> (CheckResult.name, signal key, parsing kind, contributes_to_prob_list)
 _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
@@ -268,6 +323,8 @@ _SIGNAL_SOURCES: dict[str, tuple[str, str, str, bool]] = {
     "havic.prob_inconsistent": ("havic_crossmodal_model", "prob_inconsistent", KIND_DEFAULT_NUM, True),
     "freqband.prob": ("frequency_band_analysis", "prob_deepfake", KIND_DEFAULT_NUM, True),
     "faceforensics.prob": ("image_face_forensics", "prob_deepfake", KIND_DEFAULT_NUM, True),
+    # 2026-10-22: genimage, the THIRD independent image signal (general AIGC).
+    "genimage.prob": ("genimage_image_detector", "prob_deepfake", KIND_DEFAULT_NUM, True),
 }
 
 # How many independent probability-emitting detectors a target is designed to
@@ -498,13 +555,62 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     # non-overlapping errors, a provenance check, or a content check), not a
     # re-arbitration of these two.
     # See tests/test_63_image_arbitration.py.
+    # GENIMAGE — the THIRD independent image signal (2026-10-22). The
+    # comment above ends with "Separating the two groups needs a THIRD signal
+    # (a model with non-overlapping errors, a provenance check, or a content
+    # check)". genimage IS that third signal.
+    #
+    # MEASURED on the raw 60-image corpus through the production path:
+    #     genimage AUC 0.9211 (AI median 0.9970, real median 0.4334)
+    # and, critically, on the two groups that SPAI+NYUAD could NOT separate:
+    #     real photos NYUAD-only (5): genimage 0.3813 0.8865 0.9650 0.9650 0.9991
+    #     AI images  NYUAD-only (9): genimage 0.9442 .. 0.9999
+    #
+    # ORDER MATTERS, and getting it wrong is a silent no-op: the NYUAD veto
+    # below RETURNS FALSE, so anything placed after it is unreachable. So
+    # genimage is consulted FIRST.
+    #
+    # THE THRESHOLD (0.9855) AND THE VETO-ONLY SHAPE ARE BOTH MEASURED
+    # (real FusionEngine, 60 images, tools/eval_image_arbitration.py). The
+    # full sweep, with the baseline (no genimage) at fakeTRUST 3/30 and
+    # realFALSEALARM 12/30:
+    #
+    #     threshold   veto-only              veto+clear
+    #                 fakeTRUST  realFA      fakeTRUST  realFA
+    #      0.9000        0/30      14/30        0/30      12/30
+    #      0.9300        1/30      13/30        1/30      11/30
+    #      0.9400        2/30      13/30        3/30      11/30
+    #      0.9500        2/30      12/30        4/30      10/30
+    #      0.9855        2/30      12/30        5/30       8/30
+    #
+    # THE "CLEAR" VARIANT IS REJECTED. Letting a low genimage read clear a
+    # lone NYUAD hit sounds right, but it does the opposite of what it
+    # promises: the three AI images it newly let through (gigagan_07,
+    # midjourney_v6.1_04, stable_diffusion_3_03) all have genimage 0.93-0.98
+    # — HIGH — and NYUAD 0.998-0.9995 — also HIGH. A "low" genimage reading
+    # is not evidence of genuineness, and letting a signal that reads
+    # 0.93-0.98 override a detector that reads 0.999 is exactly backwards.
+    # So genimage is a VETO ONLY: it can deny a clean reading, never grant
+    # one.
+    #
+    # THE RESULT: fakeTRUST 3/30 -> 2/30 (one fewer AI image reads TRUST),
+    # realFALSEALARM unchanged at 12/30. The third signal buys a strictly
+    # safer verdict with no cost in the other direction.
+    gen = by_name.get("genimage_image_detector")
+    if gen is not None and gen.usable():
+        gen_p = gen.signals.get("prob_deepfake", 1.0)
+        if isinstance(gen_p, (int, float)) and gen_p >= _GENIMAGE_VETO_T:
+            return False  # genimage (general AIGC) flags it -> not clean
+    # If genimage is ABSENT the behaviour is EXACTLY the pre-2026-10-22
+    # behaviour (the NYUAD veto still fires below). The third signal must
+    # never WEAKEN the channel when it is missing.
     ny = by_name.get("nyuad_image_detector")
     if ny is not None and ny.usable():
         ny_p = ny.signals.get("prob_deepfake", 1.0)
         if isinstance(ny_p, (int, float)) and ny_p >= 0.50:
             return False  # NYUAD flags it as AI (dalle/sd) -> not clean
     # FAIL-OPEN FIX (2026-10-21): an ABSENT or non-ok SPAI must NOT authorise
-    # trust. This used to `return True` ("SPAI absent, everything else clean
+    # trust. This used to `return True` ("SPAI absent, everything else clean",
     # -> trust"), which is the exact opposite of the function's own docstring:
     # a DEAD image detector (status unavailable/failed/degraded) produced
     # verdict=TRUST, so an arbitrary AI-generated image read as genuine. The
