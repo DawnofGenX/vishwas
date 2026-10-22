@@ -64,6 +64,24 @@ PART_TIMEOUT_S="${VISHWAS_TEST_PART_TIMEOUT_S:-420}"
 # checkpoint needs, with headroom.
 PART_MEM_MAX="${VISHWAS_TEST_MEM_MAX:-6G}"
 
+# Print the tree this part ran against, as the LAST line of the runner's
+# output. 2026-10-22: the stamp pytest prints lands second-to-last, so a
+# caller piping through `tail -3` / `tail -4` would drop it -- and the
+# background-run capture commands do exactly that. The runner printing it
+# itself, after the part's output, makes it survive any tail.
+tree_stamp () {
+  local sha dirty=""
+  sha="$(git -C "$(dirname "$0")/.." rev-parse --short HEAD 2>/dev/null)"
+  if [ -z "$sha" ]; then
+    echo "vishwas tree: UNKNOWN (no git info)"
+    return
+  fi
+  if [ -n "$(git -C "$(dirname "$0")/.." status --porcelain 2>/dev/null)" ]; then
+    dirty=" (DIRTY WORKTREE)"
+  fi
+  echo "vishwas tree: ${sha}${dirty}"
+}
+
 # Run one pytest invocation OUTSIDE the Hermes worker cgroup, in its own
 # systemd scope, writing to a file so the output survives a kill.
 run_part () {
@@ -93,14 +111,15 @@ part_b () {
 }
 
 case "${1:-both}" in
-  a) part_a ;;
-  b) part_b ;;
+  a) part_a; tree_stamp ;;
+  b) part_b; tree_stamp ;;
   both)
     part_a; rc_a=$?
     part_b; rc_b=$?
     echo
     if [ "$rc_a" -eq 0 ] && [ "$rc_b" -eq 0 ]; then
       echo "Both parts passed."
+      tree_stamp
       exit 0
     fi
     echo "FAILED: part A exit ${rc_a}, part B exit ${rc_b}"
@@ -108,6 +127,7 @@ case "${1:-both}" in
     echo "      NOT a test failure. The Hermes worker scope is capped at 4 GB"
     echo "      and a torch checkpoint needs ~4.17 GB, so each part must run"
     echo "      via systemd-run --user --scope (which this script does)."
+    tree_stamp
     exit 1
     ;;
   *) echo "usage: $0 [a|b|both]" >&2; exit 2 ;;
