@@ -75,19 +75,59 @@ def _sign(home: Path, data: bytes, out_sig: Path) -> None:
 
 @pytest.fixture(scope="module")
 def keys():
-    """Two throwaway keys in separate homes; returns dict with fprs + pub blobs."""
+    """Two throwaway keys in separate homes; returns dict with fprs + pub blobs.
+
+    CLEANUP (2026-10-22): this fixture used `tempfile.mkdtemp` and NEVER
+    removed the tree, so every run of the suite left behind a
+    `vishwas-gpg-test-*` directory AND a live `gpg-agent` daemon per
+    homedir. Measured on this host: 107 orphaned trees (8.8 MB) and 12
+    orphaned daemons (48 MB RSS), growing with every run.
+
+    Two things must be undone, in this order:
+      1. KILL the daemon. `gpg` starts a `gpg-agent` per GNUPGHOME and the
+         daemon is not tied to the calling process; deleting the homedir
+         does not reliably reap it. `gpgconf --homedir <h> --kill
+         gpg-agent` does.
+      2. REMOVE the tree.
+
+    The `finally` is what makes this hold on the FAILURE path too — a
+    teardown that only runs when every test passed leaks precisely when
+    the host is hardest to reason about.
+    """
+    import shutil
     import tempfile
     base = Path(tempfile.mkdtemp(prefix="vishwas-gpg-test-"))
     h1 = base / "home1"
     h2 = base / "home2"
-    fpr1 = _gen_key(h1, "Alice Signer", "alice@example.org")
-    fpr2 = _gen_key(h2, "Bob Signer", "bob@example.org")
-    yield {
-        "home1": h1, "home2": h2,
-        "fpr1": fpr1, "fpr2": fpr2,
-        "pub1": _export_pub(h1, fpr1),
-        "pub2": _export_pub(h2, fpr2),
-    }
+    try:
+        fpr1 = _gen_key(h1, "Alice Signer", "alice@example.org")
+        fpr2 = _gen_key(h2, "Bob Signer", "bob@example.org")
+        yield {
+            "home1": h1, "home2": h2,
+            "fpr1": fpr1, "fpr2": fpr2,
+            "pub1": _export_pub(h1, fpr1),
+            "pub2": _export_pub(h2, fpr2),
+        }
+    finally:
+        for home in (h1, h2):
+            _kill_gpg_agent(home)
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _kill_gpg_agent(home: Path) -> None:
+    """Stop the gpg-agent daemon that owns `home`, if any.
+
+    Best-effort: a missing gpgconf, a missing home, or an already-dead
+    agent must never fail a test. It also must not raise on a timeout.
+    """
+    if not home.is_dir():
+        return
+    try:
+        subprocess.run(
+            ["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"],
+            capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _ctx(tmp_path: Path, art: Artifact) -> JobContext:
