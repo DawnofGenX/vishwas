@@ -5,9 +5,17 @@
      the serving adapter must raise rather than emit a wrong probability.
   2. The synthetic demo generator must produce a learnable (separable)
      dataset for the target's real signals.
+
+CLEANUP (2026-10-22): these tests used `tempfile.mkdtemp()` and NEVER
+removed the directory, so every run of the suite left 4 more behind.
+Measured on this host: **455 orphaned directories, 33 MB**, growing by 4
+on every run.
+
+The fix is `tmp_path` — pytest's per-test fixture, which is removed
+automatically. It is also better isolated: each test gets its own
+directory instead of sharing the system temp dir.
 """
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,8 +28,8 @@ def _expected_features(target: str) -> int:
     return len(FusionEngine.feature_vector(target, []))
 
 
-def test_loader_rejects_mismatched_checkpoint():
-    d = Path(tempfile.mkdtemp())
+def test_loader_rejects_mismatched_checkpoint(tmp_path):
+    d = tmp_path
     # url_phishing today has 1 signal -> 2 features; a 14-feature head is stale.
     (d / "stack_url_phishing.json").write_text(json.dumps({
         "target": "url_phishing", "final": {"w": [0.1] * 14, "b": 0.0},
@@ -31,8 +39,8 @@ def test_loader_rejects_mismatched_checkpoint():
     assert "url_phishing" not in fe.lr_stacks
 
 
-def test_loader_accepts_matching_checkpoint():
-    d = Path(tempfile.mkdtemp())
+def test_loader_accepts_matching_checkpoint(tmp_path):
+    d = tmp_path
     width = _expected_features("url_phishing")
     (d / "stack_url_phishing.json").write_text(json.dumps({
         "target": "url_phishing", "final": {"w": [0.5] * width, "b": -0.2},
@@ -53,9 +61,9 @@ def test_adapter_raises_on_feature_mismatch_instead_of_padding():
         adapter.predict_proba({}, checks)
 
 
-def test_demo_dataset_is_learnable():
+def test_demo_dataset_is_learnable(tmp_path):
     from vishwas.fusion_train import generate_demo_dataset, oof_cross_val_preds
-    d = Path(tempfile.mkdtemp())
+    d = tmp_path
     out = generate_demo_dataset(d, n_clean=120, n_fraud=120, target="malicious_file")
     rows = json.loads(Path(out).read_text())["rows"]
     X = [r["x"] for r in rows]
@@ -64,11 +72,11 @@ def test_demo_dataset_is_learnable():
     assert metrics["roc_auc"] > 0.8, metrics
 
 
-def test_demo_respects_negative_weight_direction():
+def test_demo_respects_negative_weight_direction(tmp_path):
     # gov_document has NEGATIVE weights (e.g. signature.valid) that read HIGH for
     # clean docs. The demo must still be separable for such a target.
     from vishwas.fusion_train import generate_demo_dataset, oof_cross_val_preds
-    d = Path(tempfile.mkdtemp())
+    d = tmp_path
     out = generate_demo_dataset(d, n_clean=120, n_fraud=120, target="gov_document")
     rows = json.loads(Path(out).read_text())["rows"]
     X = [r["x"] for r in rows]
