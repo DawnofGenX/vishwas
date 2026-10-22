@@ -196,6 +196,26 @@ def test_the_cleanup_actually_removes_the_tree_and_kills_the_daemon():
         "created")
 
 
+def _pytest_cmd() -> list[str]:
+    """The command that runs pytest in THIS environment.
+
+    2026-10-22. This test originally hardcoded `/usr/bin/python3`, and CI
+    failed with:
+
+        /usr/bin/python3: No module named pytest
+
+    because in CI the pytest lives in the `setup-python` interpreter, NOT
+    in /usr/bin/python3. That is the SAME class of defect PR #23 fixed in
+    the split runner: a hardcoded interpreter that is right on the
+    developer machine and wrong everywhere else.
+
+    So: use the interpreter that is RUNNING this test (`sys.executable`),
+    which is by construction the one that has pytest.
+    """
+    import sys
+    return [sys.executable, "-m", "pytest"]
+
+
 def test_no_gpg_agent_survives_a_run_of_the_gpg_module():
     """END TO END: run the GPG module, then assert nothing survived.
 
@@ -220,8 +240,8 @@ def test_no_gpg_agent_survives_a_run_of_the_gpg_module():
     before_agent_homes = {_agent_homedir(p) for p in before_agents}
 
     r = subprocess.run(
-        ["/usr/bin/python3", "-m", "pytest",
-         "tests/test_15_gpg.py", "-q", "--no-header", "-p", "no:cacheprovider"],
+        _pytest_cmd() + [
+            "tests/test_15_gpg.py", "-q", "--no-header", "-p", "no:cacheprovider"],
         cwd=str(REPO), capture_output=True, text=True, timeout=900)
     assert r.returncode == 0, (
         f"the GPG module did not pass (rc={r.returncode}):\n"
