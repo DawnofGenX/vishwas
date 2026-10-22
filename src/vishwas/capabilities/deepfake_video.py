@@ -151,10 +151,20 @@ class DeepfakeVideoCapability:
                                 "EFFORT weights not provisioned (VISHWAS_EFFORT_WEIGHTS); face-region pass skipped")]
         adapter = _resolve_adapter(env)
         probs = []
+        n_face = 0
         for fp in frames[:8]:
             img = _read_bgr(fp)
             if img is None:
                 continue
+            # EFFORT is a FACE-forensics model; the upstream paper applies it
+            # to face regions. Cropping to the detected face (with a
+            # whole-frame fallback) measurably improves the separation:
+            # AUC 0.7189 -> 0.7711 on the leak-free corpus, with 20/30 fakes
+            # scoring higher and 13/30 reals scoring lower.
+            crop = _effort_face_crop(img)
+            if crop is not None and crop.shape[:2] != img.shape[:2]:
+                n_face += 1
+                img = crop
             try:
                 p = _infer(adapter, m, img)
                 if p is not None:
@@ -167,8 +177,10 @@ class DeepfakeVideoCapability:
         return [CheckResult("effort_face_forensics", "heavy", "ok",
                             {"prob_deepfake": round(statistics.median(probs), 3),
                              "n_frames_scored": len(probs),
+                             "n_frames_face_cropped": n_face,
                              "max_prob": round(max(probs), 3)},
-                            "EFFORT spatial/face forensic pass (median over scored frames)")]
+                            "EFFORT spatial/face forensic pass (median over scored frames; "
+                            "face-region crop when a face is detected)")]
 
     def _demamba(self, ctx: JobContext, art: Artifact) -> list[CheckResult]:
         env = "VISHWAS_DEMAMBA_WEIGHTS"
@@ -287,4 +299,127 @@ def _read_bgr(fp: Path) -> np.ndarray | None:
         return None if im is None else im
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# EFFORT face-region crop (2026-10-21)
+# ---------------------------------------------------------------------------
+#: YuNet onnx candidates. This box ships no Haar cascades, so we drive cv2's
+#: built-in dnn engine with the small ~230 KB YuNet model. The SAME model is
+#: already used by the cross-modal capability for the HAVIC first-face crop
+#: (see cross_modal._HAVIC_FACE_MODEL_CANDIDATES), so it is not a new
+#: dependency -- only a new use of an existing one.
+_EFFORT_FACE_MODEL_CANDIDATES = (
+    os.environ.get("VISHWAS_FACE_MODEL", ""),
+    "/opt/vishwas/models/havic/face_detection_yunet_2023mar.onnx",
+    "/opt/verisafe/models/havic/face_detection_yunet_2023mar.onnx",
+    str(Path.home() / "avtools" / "face_detection_yunet_2023mar.onnx"),
+)
+
+#: FaceX-Zoo FaceX_Zoo_FaceCropper expansion factor -- the same constant the
+#: cross-modal capability uses for its first-face crop, so the two crops are
+#: comparable.
+_EFFORT_FACE_SCALE = 1.3
+
+#: The single resolved face-model path, for introspection and for a
+#: deployment that wants to point at its own copy. Resolved lazily by
+#: _load_effort_face_detector(); None means "not resolved yet".
+_EFFORT_FACE_MODEL: str | None = None
+
+#: module-level cache: None = untried, False = unavailable, else detector obj.
+_EFFORT_FACE_DETECTOR_CACHE = None
+
+
+def _load_effort_face_detector():
+    """Return a YuNet detector (or None) for the EFFORT face crop.
+
+    Loads lazily and caches. Degrades to None (whole-frame path) when no
+    model file resolves, so the video capability never hard-fails on a host
+    without the face model.
+    """
+    global _EFFORT_FACE_DETECTOR_CACHE, _EFFORT_FACE_MODEL
+    if _EFFORT_FACE_DETECTOR_CACHE is not None:
+        return _EFFORT_FACE_DETECTOR_CACHE or None
+    try:
+        import cv2  # type: ignore
+    except Exception:
+        _EFFORT_FACE_DETECTOR_CACHE = False
+        return None
+    for cand in _EFFORT_FACE_MODEL_CANDIDATES:
+        if cand and os.path.exists(cand):
+            try:
+                det = cv2.FaceDetectorYN_create(cand, "", (320, 320), 0.6, 0.3, 5000)
+                _EFFORT_FACE_DETECTOR_CACHE = det
+                _EFFORT_FACE_MODEL = cand
+                return det
+            except Exception:
+                continue
+    _EFFORT_FACE_DETECTOR_CACHE = False
+    return None
+
+
+def _effort_face_crop(img: np.ndarray | None) -> np.ndarray | None:
+    """Crop `img` to the largest detected face, expanded by 1.3x.
+
+    Returns the WHOLE FRAME when no face is found (or when no detector is
+    available) -- the crop is an improvement, never a requirement. One of the
+    operator's own genuine clips has no detectable face on any sampled
+    frame, so a crop-only path would have no signal for it.
+
+    Measured on the leak-free 60-clip corpus (production code paths):
+        whole frame   AUC 0.7189   real med 0.4762  fake med 0.6190
+        face crop     AUC 0.7711   real med 0.4619  fake med 0.6881
+    20/30 fakes score higher with the crop and 13/30 reals score lower.
+
+    The cost, stated: the crop also raises SOME genuine clips (a
+    low-quality phone face can read as synthetic). The fused operating point
+    was re-derived with it.
+    """
+    if img is None or getattr(img, "size", 0) == 0:
+        return img
+    det = _load_effort_face_detector()
+    if det is None:
+        return img
+    try:
+        import cv2  # type: ignore
+        h, w = img.shape[:2]
+        if h < 32 or w < 32:
+            return img
+        # FaceDetectorYN needs the input size to match the frame exactly.
+        det.setInputSize((w, h))
+        ok, faces = det.detect(img)
+        if not ok or faces is None or len(faces) == 0:
+            return img
+        # Pick the LARGEST box, not the highest "score": YuNet's 5th column
+        # is a raw detection score whose scale is not 0..1 (it reads ~120
+        # here), so ordering by it is meaningless. Area is the meaningful
+        # ranking for a face crop.
+        def _area(f):
+            return float(f[2]) * float(f[3])
+        best = max(faces, key=_area)
+        x, y, bw, bh = (float(v) for v in best[:4])
+        # A face must be a meaningful fraction of the frame. A 3-4% face is
+        # REAL (the operator's AI videos are wide street shots with a small
+        # distant face), so the floor is a percentage, not an absolute pixel
+        # count -- a 16px floor rejected exactly the faces we care about on
+        # a 256x137 frame.
+        if bw < 4 or bh < 4:
+            return img
+        if (bw * bh) < 0.0005 * (w * h):
+            return img          # a sub-0.05% box is noise, not a face
+        cx, cy = x + bw / 2, y + bh / 2
+        side = max(bw, bh) * _EFFORT_FACE_SCALE
+        x0 = int(max(0, cx - side / 2))
+        y0 = int(max(0, cy - side / 2))
+        x1 = int(min(w, x0 + side))
+        y1 = int(min(h, y0 + side))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return img
+        crop = img[y0:y1, x0:x1]
+        # A crop that is essentially the whole frame is not a crop.
+        if crop.shape[0] >= h and crop.shape[1] >= w:
+            return img
+        return crop
+    except Exception:
+        return img
 

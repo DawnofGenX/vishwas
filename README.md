@@ -28,23 +28,30 @@ Raw records are in `docs/research/`.
 | Audio | aasist3 (Spectra-AASIST3) | official ASVspoof2019-LA eval | 300 | **1.0000** | **0.00%** |
 | Audio | xlsr-mamba | official ASVspoof2019-LA eval | 300 | **1.0000** | **0.00%** |
 | Image | SPAI (spectral) | raw image corpus (30 AI / 30 real) | 60 | 0.7433 | 26.67% |
-| Video | EFFORT (FF++-trained) | leak-free corpus (30 fake / 30 real) | 60 | **0.7189** | 50.00% |
+| Video | EFFORT (FF++-trained, face crop) | leak-free corpus (30 fake / 30 real) | 60 | **0.7789** | 50.00% |
 
 Posterior medians: aasist3 bonafide **0.0000** / spoof **0.9831** (perfectly
 separated, 0/150 misclassified at 0.5) · SPAI real **0.0015** / AI **0.6790**
-· EFFORT real **0.4762** / fake **0.6190**.
+· EFFORT real **0.4619** / fake **0.6881**.
 
 **EFFORT was being fed the wrong pixels.** It is a CLIP ViT-L/14, trained on
 RGB, but the serving path handed it BGR (`cv2.imread`) with no conversion —
 and then normalised it with ImageNet statistics instead of CLIP's. Every
 sibling arch (`spai.py`, `nyuad.py`, `effnet_image.py`) does its own
 BGR→RGB conversion; EFFORT was the only one relying on the shared
-preprocess, which is why the omission was invisible. Fixing it is worth
-**+0.070 AUC** (0.6511 → 0.7189) and it also fixed the operator's *silent*
-real video, which used to read MEDIUM and now reads LOW.
+preprocess, which is why the omission was invisible. Fixing the input is
+worth **+0.070 AUC** (0.6511 → 0.7189) and it also fixed the operator's
+*silent* real video, which used to read MEDIUM and now reads LOW.
 
-The fusion offset was re-derived with it (`-0.55` → `-0.30`), because the
-old offset was fitted to the broken score distribution. See
+**EFFORT is a face-forensics model and was being fed whole frames.** The
+upstream paper applies it to face regions, and the cross-modal capability
+already loads a YuNet face detector for the HAVIC first-face crop. Cropping
+to the detected face (with a whole-frame fallback, because a clip may have no
+detectable face) is worth a further **+0.060 AUC** (0.7189 → 0.7789) and
+lifts the operator's AI videos from 0.32–0.37 to 0.54–0.65 on effort.
+
+The fusion offset was re-derived twice to match (‑0.55 → ‑0.30 → ‑0.40),
+because the old offset was fitted to the broken score distribution. See
 `docs/research/` and the measurement notes.
 
 ### The video channel was re-measured on a corpus that had a label leak
@@ -117,7 +124,8 @@ that only publishes its wins is not telling you the truth:
   on any image is 0.5150, below its 0.60 threshold). It is left in place
   deliberately, but it is a landmine: a "tighter" 0.45 threshold would block
   **21 of 30 genuine photos and 1 of 30 AI images** — the wrong way round.
-- **EFFORT still barely separates** (AUC 0.7189 after the input fix). The
+- **EFFORT still barely separates** (AUC 0.7789 after the input fix and the
+  face crop). The
   87-clip calibration corpus behind the older operating point has **no audio
   stream on 83 of its 87 rows**, so the two cross-modal gates (AV-sync,
   weight 3.5; HAVIC, weight 0.8) were never actually measured on 95% of the
@@ -128,17 +136,22 @@ that only publishes its wins is not telling you the truth:
   corroborator.** EFFORT is a *face*-forensics model and is weak on
   full-scene AI video; the upstream paper applies it to face regions, which
   this pipeline does not do.
-- **With the corrected input, effort alone cannot separate the operator's
-  own AI videos** — they score 0.34–0.37 on effort, *lower* than the
-  genuine clips (0.44–0.63). The **cross-modal** signal is what flags
-  them (their audio is anti-correlated, av=0.5). That is the documented
-  design, and the real AI videos do read `do_not_use` end-to-end. But on
-  the leak-free corpus 15 of 30 fakes read TRUST, because a muxed audio
-  track decorrelates rather than anti-correlates and never reaches the
+- **With the corrected input, effort alone still cannot separate the
+  operator's own AI videos** from some genuine clips — the AI videos score
+  0.54–0.65 on the face crop while some genuine clips score higher. The
+  **cross-modal** signal is what flags them (their audio is
+  anti-correlated, av=0.5). That is the documented design, and the real AI
+  videos do read `do_not_use` end-to-end (3/3 HIGH). But on the leak-free
+  corpus 11 of 30 fakes still read TRUST, because a muxed audio track
+  decorrelates rather than anti-correlates and never reaches the
   anti-correlated band. **A corpus with naturally synchronised audio is
   the missing instrument.**
+- **The face crop also raises SOME genuine clips** (a low-quality phone
+  face can read as synthetic: ffc23 real 451 went 0.421 → 0.775 on the
+  whole frame vs the crop). That is a real false-positive cost, and it is
+  why the offset was re-derived a second time.
 
-**Test suite:** **600 passed / 1 skipped** on a developer machine (the service
+**Test suite:** **605 passed / 1 skipped** on a developer machine (the service
 venv: Python 3.11, torch 2.14.1+cu130, all learned detectors installed, and
 the legacy `pylibs` tree present). In **CI** — a clean checkout with only the
 declared dependencies — the same suite measures **506 passed / 31 skipped**

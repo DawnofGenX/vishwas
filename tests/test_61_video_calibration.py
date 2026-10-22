@@ -57,7 +57,14 @@ fe = FusionEngine()
 
 # The leak-free corpus, produced by:
 #   tools/build_crossmodal_corpus_v2.py  ->  rows_crossmodal_v2.jsonl
-#   tools/score_video_signals.py         ->  video_signal_rows_v2.jsonl
+#   tools/score_video_signals_crop.py    ->  video_signal_rows_crop.jsonl
+#
+# The CROP dataset is preferred: it carries the effort values the PRODUCTION
+# path now produces (the face-region crop), so the assertions describe the
+# shipped behaviour. The whole-frame dataset is the fallback for a host where
+# the crop has not been re-scored.
+CROP_ROWS_PATH = pathlib.Path(
+    "/home/hermes/.hermes/cache/scratch/video_signal_rows_crop.jsonl")
 ROWS_PATH = pathlib.Path(
     "/home/hermes/.hermes/cache/scratch/video_signal_rows_v2.jsonl")
 
@@ -67,11 +74,24 @@ OP_REALS_PATH = pathlib.Path(
     "/home/hermes/.hermes/cache/scratch/operator_reals_signals.jsonl")
 
 
+def _rows():
+    """The measured corpus, preferring the face-crop dataset."""
+    for path, key in ((CROP_ROWS_PATH, "effort_crop"), (ROWS_PATH, "effort")):
+        if path.exists():
+            data = _load(path)
+            if data:
+                for r in data:
+                    r["_effort_key"] = key
+                return data
+    return []
+
+
 def _checks_from_row(r, *, with_cross_modal=True):
     """Rebuild real CheckResult objects from a measured signal row."""
+    effort = r.get(r.get("_effort_key", "effort"))
     out = [
         C("effort_face_forensics", "heavy", "ok",
-          {"prob_deepfake": r["effort"]}, "measured"),
+          {"prob_deepfake": effort}, "measured"),
         C("frame_heuristics", "mid", "ok",
           {"prob_deepfake": r["frameheur"]}, "measured"),
     ]
@@ -208,7 +228,7 @@ def test_no_real_clip_reads_do_not_use_on_the_leak_free_corpus():
     source. The genuine natural-audio clips (the operator's own 4) still
     read TRUST -- see test_operator_real_clips_still_never_read_do_not_use.
     """
-    rows = _load(ROWS_PATH)
+    rows = _rows()
     reals = [r for r in rows if r["label"] == 0]
     fakes = [r for r in rows if r["label"] == 1]
     assert len(reals) and len(fakes)
@@ -246,14 +266,14 @@ def test_no_fake_clip_reads_trust_on_the_leak_free_corpus():
     The ceiling is set with headroom so a re-score does not break the
     build, but a collapse toward 30/30 (the channel fully disarmed) would.
     """
-    rows = _load(ROWS_PATH)
+    rows = _rows()
     fakes = [r for r in rows if r["label"] == 1]
     fn = []
     for r in fakes:
         d = fe.decide("deepfake_video", _checks_from_row(r))
         if d.verdict is Verdict.TRUST:
             fn.append((r["path"].split("/")[-1], round(d.score, 3)))
-    assert len(fn) <= 18, (
+    assert len(fn) <= 13, (
         f"{len(fn)}/{len(fakes)} fake clips read TRUST: {fn}")
 
 
@@ -331,21 +351,30 @@ def test_video_detection_rate_is_reported_not_claimed_as_total():
     -0.30 (see tools/choose_effort_offset_both.py), and the operating
     point moved with it:
 
-        pre-fix  (BGR input,   offset -0.55): FP=0  fakeDNU=7  fakeTRUST=0
-        post-fix (RGB input,   offset -0.30): FP=2  fakeDNU=10 fakeTRUST=15
+        pre-fix   (BGR input,  offset -0.55): FP=0  fakeDNU=7  fakeTRUST=0
+        RGB fix   (RGB input,  offset -0.30): FP=2  fakeDNU=10 fakeTRUST=15
+        + crop    (face crop,  offset -0.40): FP=1  fakeDNU=13 fakeTRUST=11
 
-    The 15 fakes reading TRUST are the honest cost: with the CORRECT input
-    the operator's own AI videos score LOWER on effort (0.34-0.37) than the
-    genuine clips (0.44-0.63), so effort ALONE cannot separate them and
-    the cross-modal signal is what flags them. That is the documented
-    design ("the operator AI video still reaches DO_NOT_USE via the AV
-    corroboration path, NOT effort alone") -- and the real AI videos
-    DO read DO_NOT_USE end-to-end, verified against the live CLI.
+    With the CORRECT input AND the face crop, the operator's own AI videos
+    score LOWER on effort than some genuine clips, so effort ALONE cannot
+    separate them -- the cross-modal signal is what flags them. That is the
+    documented design ("the operator AI video still reaches DO_NOT_USE via
+    the AV corroboration path, NOT effort alone") -- and the real AI videos
+    DO read DO_NOT_USE end-to-end, verified against the live CLI (3/3 AI
+    videos HIGH, 4/4 genuine clips LOW).
+
+    The 11 fakes reading TRUST are the honest cost: this corpus's audio is
+    MUXED from a different source, so the lip/speech envelopes
+    decorrelate (av=0.45) and never reach the anti-correlated band (av=0.5)
+    that the operator's real AI videos produce. The corroboration gate
+    discounts the decorrelated band, so those fakes have nothing left to
+    flag them. A corpus with naturally synchronised audio is the missing
+    instrument.
 
     The assertions are a FLOOR on detection and a CEILING on false
     positives, not equality -- so the suite stays honest if the corpus is
     re-scored."""
-    rows = _load(ROWS_PATH)
+    rows = _rows()
     reals = [r for r in rows if r["label"] == 0]
     fakes = [r for r in rows if r["label"] == 1]
     fp = sum(1 for r in reals
@@ -354,8 +383,8 @@ def test_video_detection_rate_is_reported_not_claimed_as_total():
     dnu = sum(1 for r in fakes
               if fe.decide("deepfake_video", _checks_from_row(r)).verdict
               is Verdict.DO_NOT_USE)
-    assert fp <= 2, f"false positives on genuine clips: {fp}/{len(reals)}"
-    assert dnu >= 8, (
+    assert fp <= 1, f"false positives on genuine clips: {fp}/{len(reals)}"
+    assert dnu >= 12, (
         f"only {dnu}/{len(fakes)} fakes flagged — the video channel must not "
         "be silently disarmed")
     # A fake that reads TRUST is the overclaim that matters most. The
@@ -364,7 +393,7 @@ def test_video_detection_rate_is_reported_not_claimed_as_total():
     fn = sum(1 for r in fakes
              if fe.decide("deepfake_video", _checks_from_row(r)).verdict
              is Verdict.TRUST)
-    assert fn <= 18, f"{fn}/{len(fakes)} fakes read TRUST"
+    assert fn <= 13, f"{fn}/{len(fakes)} fakes read TRUST"
 
 
 # ---------------------------------------------------------------------------
@@ -398,10 +427,10 @@ def test_the_effort_offset_is_the_re_derived_one():
     DO_NOT_USE."""
     from vishwas.fusion import _CALIBRATE
     a, b = _CALIBRATE["effort.prob"]
-    assert (a, b) == (1.0, -0.30), (
+    assert (a, b) == (1.0, -0.40), (
         f"the effort calibration is {(_CALIBRATE['effort.prob'])}; -0.55 was "
         "fitted to the BROKEN (BGR) score distribution and clips the "
-        "corrected scores to zero")
+        "corrected scores to zero, and -0.30 predates the face crop")
 
 
 # ---------------------------------------------------------------------------
