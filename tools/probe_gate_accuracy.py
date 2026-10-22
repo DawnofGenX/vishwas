@@ -239,20 +239,46 @@ def probe_image(n: int = 30) -> list[dict]:
         d = IMG_DIR / sub
         if not d.is_dir():
             continue
-        for f in sorted(d.iterdir())[:n]:
-            if f.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
-                continue
+        # ⚠️ FILTER BEFORE YOU SLICE (2026-10-22). This used to be
+        #     for f in sorted(d.iterdir())[:n]:
+        #         if f.suffix.lower() not in (...): continue
+        # which slices FIRST and filters SECOND. `fusion_img/ai/` contains
+        # 31 entries: 30 images plus a `sources.csv` manifest. `sources.csv`
+        # sorts BEFORE `stable_diffusion_3_*`, so the `[:30]` slice
+        # dropped a REAL AI IMAGE (stable_diffusion_3_07.webp) and kept the
+        # CSV -- which was then skipped by the extension check, and the
+        # shortfall was INVISIBLE: the probe reported n=59 for a 60-image
+        # corpus.
+        #
+        # ⇒ A SILENT SKIP HIDES A BROKEN CORPUS AND LOOKS IDENTICAL TO A
+        # MODEL THAT FAILED. The count must be checked against the corpus
+        # size, and the corpus size is printed below.
+        files = [f for f in sorted(d.iterdir())
+                 if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
+        if not files:
+            continue
+        corpus_n = len(files)
+        files = files[:n]
+        skipped = 0
+        for f in files:
             img = cv2.imread(str(f), cv2.IMREAD_COLOR)
             if img is None:
+                skipped += 1
                 continue
             try:
                 s = model.predict(img)
             except Exception:
+                skipped += 1
                 continue
             if s is None:
+                skipped += 1
                 continue
             scores.append(float(s))
             labels.append(lab)
+        if skipped:
+            print(f"    ⚠️ image/{sub}: {skipped} of {len(files)} did not score")
+        if len(files) < corpus_n:
+            print(f"    (image/{sub}: scored {len(files)} of {corpus_n} available)")
     return [{"gate": label, "n": len(scores), "auc": auc(scores, labels),
              "sep": sep(scores, labels)}]
 
@@ -281,6 +307,7 @@ def probe_video(n: int = 40) -> list[dict]:
         return [{"gate": label, "error": f"no clips under {VID_DIR}"}]
 
     scores, labels = [], []
+    skipped = 0
     for i, (f, lab) in enumerate(clips):
         q = Q / f"v{i}"
         q.mkdir(parents=True, exist_ok=True)
@@ -291,9 +318,11 @@ def probe_video(n: int = 40) -> list[dict]:
         try:
             frames = extract_frames(f, q / "frames", n=8)
             if not frames:
+                skipped += 1
                 continue
             checks = cap._effort(ctx, frames)
         except Exception:
+            skipped += 1
             continue
         for c in checks:
             if c.name == "effort_face_forensics" and c.status == "ok":
@@ -301,9 +330,49 @@ def probe_video(n: int = 40) -> list[dict]:
                 if v is not None:
                     scores.append(float(v))
                     labels.append(lab)
-                break
+                    break
+        else:
+            skipped += 1
+    if skipped:
+        print(f"    ⚠️ video: {skipped} of {len(clips)} clips did not score")
     return [{"gate": label, "n": len(scores), "auc": auc(scores, labels),
              "sep": sep(scores, labels)}]
+
+
+def _expected_counts() -> dict:
+    """How many items each corpus SHOULD yield.
+
+    ⚠️ THE PROBE SAMPLES, SO THE EXPECTED COUNT IS THE SAMPLE SIZE, NOT
+    THE CORPUS SIZE (2026-10-22). The image corpus has 30 AI + 30 real
+    and the probe takes 30 per class, so 60. The audio corpus is
+    24,844 rows and the probe takes 60 per class, so 120. The video
+    corpus is 20 clips in `fake/`+`real/` and the probe takes 40 per
+    class, so 20.
+
+    This exists so a SILENT SKIP is visible. Every channel does
+    `except Exception: continue`, so a model that fails on everything
+    and a corpus that is missing an item look IDENTICAL in the output.
+    """
+    counts = {}
+    if IMG_DIR.is_dir():
+        total = 0
+        for sub in ("ai", "real"):
+            d = IMG_DIR / sub
+            if d.is_dir():
+                total += min(30, len([f for f in d.iterdir()
+                                      if f.suffix.lower() in
+                                      (".jpg", ".jpeg", ".png", ".webp")]))
+        counts["image"] = total
+    if PARQUET.exists():
+        counts["audio"] = 2 * 60
+    if VID_DIR.is_dir():
+        total = 0
+        for sub in ("fake", "real"):
+            d = VID_DIR / sub
+            if d.is_dir():
+                total += min(40, len(list(d.glob("*.mp4"))))
+        counts["video"] = total
+    return counts
 
 
 def main() -> int:
@@ -324,6 +393,26 @@ def main() -> int:
     out = pathlib.Path("/home/hermes/.hermes/cache/scratch/gate_accuracy.json")
     out.write_text(json.dumps(results, indent=2))
     print(f"\nwrote {out}")
+    # ⚠️ A COUNT THAT DOES NOT MATCH THE CORPUS IS A RED FLAG (2026-10-22).
+    # Every probe channel SILENTLY SKIPS what it cannot score, so a broken
+    # model and a broken corpus look IDENTICAL in the output. The corpus
+    # sizes are printed so a shortfall is visible rather than inferred.
+    print()
+    print("=== CORPUS vs MEASURED (a shortfall means something was dropped) ===")
+    expected = _expected_counts()
+    for channel, recs in results.items():
+        for r in recs:
+            if r.get("error"):
+                continue
+            exp = expected.get(channel)
+            if exp is None:
+                continue
+            n = r.get("n", 0)
+            if n != exp:
+                print(f"  ⚠️ {channel:6} {r['gate']:14} measured n={n} but the "
+                      f"corpus has {exp} — SOMETHING WAS DROPPED")
+            else:
+                print(f"  ok  {channel:6} {r['gate']:14} n={n} (all of the corpus)")
     shutil.rmtree(Q, ignore_errors=True)
     return 0
 
