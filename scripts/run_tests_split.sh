@@ -34,10 +34,41 @@
 # not the process group, so a new process group still inherits the 4 GB
 # cap. Only moving to a different cgroup does.
 #
+# INTERPRETER (2026-10-22) — PINNED, NEVER A BARE `python`
+# ----------------------------------------------------------
+# The runner used to invoke a bare `python`. On this host `python` resolves
+# to the Hermes 3.14 venv, which has NO pytest:
+#
+#     --- PART A (exit 1) ---
+#     /home/hermes/.hermes/installs/<id>/.../venv/bin/python:
+#         No module named pytest
+#
+# So the runner produced NO test results at all, and the "PART A (exit 1)"
+# line was pytest's own error rather than a test outcome — a caller could
+# not tell "the suite failed" from "the suite never ran".
+#
+# The interpreter is now resolved explicitly, in this order:
+#   1. $VISHWAS_TEST_PYTHON          (explicit override)
+#   2. /home/hermes/.venv-ambient/bin/python   (the service venv: torch,
+#      torchvision, transformers — the tree that can load every gate)
+#   3. /usr/bin/python3              (3.12; torch 2.4.1, no torchvision)
+#   4. whatever `command -v python3` finds, ONLY if it can import pytest
+# and then it is VERIFIED to import pytest before use. If none can, the
+# runner says so ITSELF (FATAL) instead of letting pytest print a
+# confusing error.
+#
+# NOTE the difference between the two fallbacks, measured 2026-10-22 on the
+# seven heavy modules:
+#     /usr/bin/python3 (3.12, torch 2.4.1)  -> 58 passed, 3 skipped
+#     .venv-ambient   (3.11, torch 2.14.1)  -> 60 passed, 2 skipped
+# The two extra passes are the torchvision-gated SPAI test. So the venv is
+# PREFERRED, not merely allowed.
+#
 # Usage:
 #   scripts/run_tests_split.sh            # both parts (the default)
 #   scripts/run_tests_split.sh a          # part A only
 #   scripts/run_tests_split.sh b          # part B only
+#   scripts/run_tests_split.sh python     # print the resolved interpreter
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -63,6 +94,45 @@ PART_TIMEOUT_S="${VISHWAS_TEST_PART_TIMEOUT_S:-420}"
 # The scope limit for a part. It must exceed the ~4.17 GB a single torch
 # checkpoint needs, with headroom.
 PART_MEM_MAX="${VISHWAS_TEST_MEM_MAX:-6G}"
+
+# Resolve an interpreter that can actually import pytest.
+#
+# A candidate is accepted only if it exists, is executable, and can import
+# pytest. The probe is cheap (one -c import) and it is the difference
+# between "the suite failed" and "the suite never ran".
+resolve_python () {
+  local c
+  for c in "${VISHWAS_TEST_PYTHON:-}" \
+           "/home/hermes/.venv-ambient/bin/python" \
+           "/usr/bin/python3"; do
+    [ -n "$c" ] || continue
+    [ -x "$c" ] || continue
+    if "$c" -c "import pytest" >/dev/null 2>&1; then
+      echo "$c"
+      return 0
+    fi
+  done
+  # Last resort: anything named python3 on the PATH, but ONLY if it can
+  # import pytest. A bare name is PATH-dependent, so it is the weakest
+  # option and is only reached when nothing explicit exists.
+  c="$(command -v python3 2>/dev/null || true)"
+  if [ -n "$c" ] && "$c" -c "import pytest" >/dev/null 2>&1; then
+    echo "$c"
+    return 0
+  fi
+  return 1
+}
+
+PY="$(resolve_python || true)"
+if [ -z "${PY}" ]; then
+  echo "FATAL: no interpreter on this host can import pytest." >&2
+  echo "  Tried: \$VISHWAS_TEST_PYTHON, /home/hermes/.venv-ambient/bin/python," >&2
+  echo "         /usr/bin/python3, and python3 on the PATH." >&2
+  echo "  Fix with one of:" >&2
+  echo "    pip install pytest            # into the interpreter you want" >&2
+  echo "    VISHWAS_TEST_PYTHON=/path/to/python bash scripts/run_tests_split.sh" >&2
+  exit 1
+fi
 
 # Print the tree this part ran against, as the LAST line of the runner's
 # output. 2026-10-22: the stamp pytest prints lands second-to-last, so a
@@ -90,7 +160,7 @@ run_part () {
   out="$(mktemp)"
   systemd-run --user --scope -p "MemoryMax=${PART_MEM_MAX}" \
     timeout --kill-after=30 "${PART_TIMEOUT_S}" \
-    python -m pytest "$@" -q > "$out" 2>&1
+    "$PY" -m pytest "$@" -q > "$out" 2>&1
   local rc=$?
   echo "--- ${label} (exit ${rc}) ---"
   # The summary line is at the end; print the tail so the counts are visible
@@ -111,8 +181,21 @@ part_b () {
 }
 
 case "${1:-both}" in
-  a) part_a; tree_stamp ;;
-  b) part_b; tree_stamp ;;
+  a)
+    part_a; rc_a=$?
+    tree_stamp
+    exit $rc_a
+    ;;
+  b)
+    part_b; rc_b=$?
+    tree_stamp
+    exit $rc_b
+    ;;
+  python)
+    # Print the interpreter this run would use. A caller that wants to
+    # reproduce the run needs to know WHICH python it was.
+    echo "$PY"
+    ;;
   both)
     part_a; rc_a=$?
     part_b; rc_b=$?

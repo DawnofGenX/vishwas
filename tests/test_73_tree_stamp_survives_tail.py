@@ -69,19 +69,66 @@ def test_the_runner_prints_the_tree_stamp_itself():
         "the runner's stamp helper does not emit the 'vishwas tree:' prefix")
 
 
+def _case_arm(src: str, label: str) -> str:
+    """Return the body of a `case` arm, given its label (e.g. "a").
+
+    The arm is read as a BLOCK, from its label to its terminating `;;`.
+    A one-line assumption is wrong: the single-part arms grew to a block
+    when they had to propagate the part's exit code (2026-10-22), and the
+    old line-based lookup silently stopped finding them.
+    """
+    import re
+    m = re.search(rf"(?m)^\s*{re.escape(label)}\)\s*$", src)
+    assert m, f"the runner no longer has the {label!r} arm"
+    end = src.find(";;", m.end())
+    body = src[m.end():end] if end != -1 else src[m.end():]
+    # the block ends at the next top-level case label if there is no `;;`
+    nxt = re.search(r"(?m)^\s{2}\S", body)
+    if nxt:
+        body = body[:nxt.start()]
+    return body
+
+
 def test_the_runner_prints_the_stamp_after_the_parts_output():
     """The stamp must come AFTER the part's output, or a `tail` of the
-    runner's output would drop it."""
+    runner's output would drop it.
+
+    2026-10-22: the single-part arms grew from one line to a block, because
+    they now have to PROPAGATE the part's exit code (the one-line form
+    ended with `tree_stamp`, whose status is always 0 — so a failed part
+    reported success). The assertion below therefore reads the ARM as a
+    block, not as a single line, and checks the same two things it always
+    did: the arm runs the part, and the stamp comes after it.
+    """
     src = _runner_src()
-    # the case arms that run a part must also emit the stamp
-    for arm in ("a) part_a", "b) part_b"):
-        i = src.find(arm)
-        assert i != -1, f"the runner no longer has the {arm!r} arm"
-        line_end = src.find("\n", i)
-        line = src[i:line_end]
-        assert "tree_stamp" in line, (
-            f"the runner's {arm!r} arm does not print the stamp, so the "
+    for label, part in (("a", "part_a"), ("b", "part_b")):
+        body = _case_arm(src, label)
+        assert part in body, (
+            f"the runner's {label!r} arm does not run {part}")
+        assert "tree_stamp" in body, (
+            f"the runner's {label!r} arm does not print the stamp, so the "
             "provenance is not the last thing in its output")
+        assert body.index("tree_stamp") > body.index(part), (
+            f"the runner's {label!r} arm prints the stamp BEFORE running the "
+            "part, so a `tail` of its output would show the stamp without "
+            "the results it describes")
+
+
+def test_the_single_part_arms_propagate_the_parts_exit_code():
+    """2026-10-22. The one-line arms ended with `tree_stamp`, so the arm's
+    exit status was the stamp's — always 0. A caller that ran one part and
+    checked `$?` saw SUCCESS for a run that had tested nothing.
+
+    The arm must therefore capture the part's status and exit with it.
+    """
+    src = _runner_src()
+    for label in ("a", "b"):
+        body = _case_arm(src, label)
+        assert "rc_" in body, (
+            f"the runner's {label!r} arm does not capture the part's exit code")
+        assert "exit $rc" in body, (
+            f"the runner's {label!r} arm does not exit with the part's exit "
+            "code — a failed part would be reported as a successful run")
 
 
 def test_the_runner_reports_a_dirty_worktree():
