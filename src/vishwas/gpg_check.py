@@ -25,6 +25,29 @@ DEFAULT_TRUSTSTORE = Path.home() / ".vishwas" / "gpg-truststore"
 _TIMEOUT_S = 60
 
 
+def _kill_gpg_agent(home: Path) -> None:
+    """Stop the `gpg-agent` daemon that owns `home`, if any.
+
+    2026-10-22. `gpg` starts a `gpg-agent` daemon per GNUPGHOME and the
+    daemon is NOT tied to the calling process — removing the homedir does
+    not reliably reap it, and the daemon keeps its socket and memory alive
+    for as long as it runs. On a long-lived host that is a slow leak: one
+    daemon per verification, each a few MB.
+
+    `gpgconf --homedir <home> --kill gpg-agent` is the supported way to
+    stop it. Best-effort by design: a missing `gpgconf`, a missing home,
+    or an already-dead agent must never fail a verification.
+    """
+    try:
+        if not home.is_dir():
+            return
+        subprocess.run(
+            ["gpgconf", "--homedir", str(home), "--kill", "gpg-agent"],
+            capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @dataclass
 class GpgVerdict:
     valid: bool | None          # True/False = cryptographic result; None = unverifiable
@@ -324,7 +347,22 @@ def verify_with_truststore(data_bytes: bytes, sig_bytes_or_path: bytes | Path,
               else Path.home() / ".vishwas" / "gpg-known")
     ts_fps = {fp.upper() for fp in load_truststore(ts_dir)}
 
-    base = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="vishwas-gpg-run-"))
+    # ⚠️ THE CALLER'S workdir MUST NOT BE DELETED (2026-10-22).
+    # The `finally` below does an unconditional `shutil.rmtree(base)`, and
+    # when the caller supplies a workdir, `base` IS the caller's directory.
+    # The production caller passes `ctx.quarantine_root / "gpg"` — so the
+    # callee was deleting a directory the CALLER owns, alongside anything
+    # else that lives under the job's quarantine root. Measured: a
+    # caller-owned directory with the caller's own file in it came back
+    # DELETED.
+    #
+    # So: only the directory WE created is removed. A caller-supplied
+    # workdir is left alone — it is the caller's to manage.
+    own_tmp: Path | None = None
+    if workdir:
+        base = Path(workdir)
+    else:
+        base = own_tmp = Path(tempfile.mkdtemp(prefix="vishwas-gpg-run-"))
     kr = GpgKeyring(base)
     try:
         if not kr.usable:
@@ -347,4 +385,19 @@ def verify_with_truststore(data_bytes: bytes, sig_bytes_or_path: bytes | Path,
     except Exception as e:  # noqa: BLE001
         return GpgVerdict(None, None, None, f"{type(e).__name__}: {e}")
     finally:
-        shutil.rmtree(base, ignore_errors=True)
+        # Kill the gpg-agent daemon that owns this homedir — WHETHER we
+        # created it or the caller supplied it.
+        #
+        # 2026-10-22: `gpg` starts a daemon per GNUPGHOME and it is NOT
+        # tied to the calling process, so it survives. Leaving the caller's
+        # homedir behind is correct (the caller owns its files), but
+        # leaving the DAEMON behind is a leak: one per verification, each
+        # holding a socket and a few MB, for the life of the host.
+        #
+        # The daemon holds no state the caller needs — the keyring is on
+        # disk — so killing it is safe even for a caller-supplied homedir.
+        _kill_gpg_agent(base)
+        # Only ever REMOVE what THIS function created. A caller-supplied
+        # workdir is the caller's to manage.
+        if own_tmp is not None:
+            shutil.rmtree(own_tmp, ignore_errors=True)
