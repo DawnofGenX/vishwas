@@ -65,13 +65,74 @@ def auc(scores: list[float], labels: list[int]) -> float | None:
     return (s_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
 
 
+def eer(scores: list[float], labels: list[int]) -> float | None:
+    """Equal Error Rate: the threshold minimising (FAR + FRR) / 2.
+
+    ⚠️ THE DIRECTION MATTERS (2026-10-22). A "fake" decision is
+    `score >= th`, so the FALSE-ACCEPT rate is (real scored >= th) and the
+    FALSE-REJECT rate is (spoof scored < th). The first version had them
+    SWAPPED, which reported **50% EER for a perfectly separating
+    detector** -- the numbers were the giveaway, not the code. A detector
+    that separates its classes perfectly cannot have a 50% error rate.
+
+    ⚠️ AND A NaN SCORE IS NOT A SCORE. A NaN would compare False against
+    every threshold and silently land on whichever side, so NaN is
+    dropped before the computation.
+    """
+    pairs = [(s, l) for s, l in zip(scores, labels)
+             if s == s and s is not None]
+    if not pairs:
+        return None
+    pos = [s for s, l in pairs if l == 1]
+    neg = [s for s, l in pairs if l == 0]
+    if not pos or not neg:
+        return None
+    # ⚠️ THE THRESHOLD SEARCH MUST COVER BOTH POLARITIES.
+    # An INVERTED detector (fake LOW, real HIGH) is perfectly separated,
+    # but the decision rule "score >= th => fake" cannot express "fake is
+    # the LOW score" -- so a one-sided search reports 50% for a detector
+    # that is in fact perfect.
+    #
+    # The EER is therefore computed over BOTH polarities: for each
+    # threshold, take the better of "fake is high" and "fake is low".
+    # That is the standard threshold-free EER, and it is what makes the
+    # number mean "how well can this score separate the classes" rather
+    # than "is the score oriented the right way".
+    #
+    # (The AUDIENCE cares about orientation: a detector that scores
+    # bonafide HIGH would read as "everything is fake". That is a
+    # SEPARATE defect, and it shows up in the AUC -- an AUC near 0.0 --
+    # not in the EER.)
+    vals = sorted(set(s for s, _ in pairs))
+    lo = min(0.0, vals[0] - 1.0)
+    hi = max(1.0, vals[-1] + 1.0)
+    thresholds = [lo] + vals + [hi]
+    best = 1.0
+    for th in thresholds:
+        # polarity A: score >= th means fake
+        far_a = sum(1 for s in neg if s >= th) / len(neg)
+        frr_a = sum(1 for s in pos if s < th) / len(pos)
+        # polarity B: score <= th means fake (the INVERTED reading)
+        far_b = sum(1 for s in neg if s <= th) / len(neg)
+        frr_b = sum(1 for s in pos if s > th) / len(pos)
+        best = min(best, (far_a + frr_a) / 2.0, (far_b + frr_b) / 2.0)
+    return best
+
+
 def sep(scores: list[float], labels: list[int]) -> str:
     pos = [s for s, l in zip(scores, labels) if l == 1]
     neg = [s for s, l in zip(scores, labels) if l == 0]
     if not pos or not neg:
         return "n/a"
-    return (f"fake med {st.median(pos):.4f} (min {min(pos):.4f}) | "
-            f"real med {st.median(neg):.4f} (max {max(neg):.4f})")
+    out = (f"fake med {st.median(pos):.4f} (min {min(pos):.4f}) | "
+           f"real med {st.median(neg):.4f} (max {max(neg):.4f})")
+    e = eer(scores, labels)
+    if e is not None:
+        out += f" | EER {e*100:.2f}%"
+    mis = (sum(1 for s in pos if s < 0.5)
+           + sum(1 for s in neg if s >= 0.5))
+    out += f" | misclassified @0.5: {mis} of {len(scores)}"
+    return out
 
 
 # ---------------------------------------------------------------- AUDIO
