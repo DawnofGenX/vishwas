@@ -440,22 +440,54 @@ def _resolved_weights_env() -> tuple[str | None, str | None]:
     return None, None
 
 
+# ⚠️ THE SPAI MODEL CACHE (2026-10-22). `_load_model()` used to load the
+# checkpoint on EVERY image (the SPAI path calls it per image, exactly as
+# the genimage path did). This is the SAME defect PR #28 fixed in the
+# AUDIO lane and PR #31 fixed for genimage — **A FIX IN ONE LANE IS NOT
+# A FIX IN THE NEXT; LOOK FOR THE SAME SHAPE EVERYWHERE.**
+#
+# Keyed on the checkpoint PATH (a different checkpoint must never serve a
+# stale model), BOUNDED, and a FAILED load is NOT cached (a checkpoint
+# provisioned later must be picked up, not permanently poisoned).
+_FACE_MODEL_CACHE: dict = {}
+_FACE_MODEL_CACHE_MAX = 4
+
+
 def _load_model():
     """Registry-gated loader; returns None unless the resolved env path exists AND
-    torch is importable. Routes through model_adapters (face or EFFORT family)."""
+    torch is importable. Routes through model_adapters (face or EFFORT family).
+
+    ⚠️ CACHED (2026-10-22). The checkpoint was reloaded for EVERY image;
+    it is now loaded once per checkpoint PATH. The cache is bounded, keyed
+    on the path, and a FAILED load is not cached."""
     env, p = _resolved_weights_env()
     if not p or not os.path.exists(p):
         return None
+    key = str(p)
+    if key in _FACE_MODEL_CACHE:
+        return _FACE_MODEL_CACHE[key]
     adapter = _resolve_adapter(env) if env else None
+    obj = None
     if adapter is not None:
         obj = adapter.load(p)
-        return obj if _is_usable_model(obj) else None
-    try:
-        import torch  # type: ignore
-        obj = torch.load(p, map_location=resolve_device(), weights_only=False)
-        return obj if _is_usable_model(obj) else None
-    except Exception:
+        if not _is_usable_model(obj):
+            obj = None
+    else:
+        try:
+            import torch  # type: ignore
+            obj = torch.load(p, map_location=resolve_device(), weights_only=False)
+            if not _is_usable_model(obj):
+                obj = None
+        except Exception:
+            obj = None
+    if obj is None:
+        # A FAILURE IS NOT CACHED — a checkpoint provisioned later must be
+        # picked up, not permanently poisoned by this failure.
         return None
+    if len(_FACE_MODEL_CACHE) >= _FACE_MODEL_CACHE_MAX:
+        _FACE_MODEL_CACHE.clear()
+    _FACE_MODEL_CACHE[key] = obj
+    return obj
 
 
 def _infer_face(adapter, model, img: np.ndarray) -> float | None:
