@@ -77,6 +77,11 @@ def load_audio_rows(n_bona: int, n_spoof: int, seed: int):
     out = {0: [], 1: []}
     rg = 0
     rng = random.Random(seed)
+    # ⚠️ COUNT THE ROWS THAT DO NOT DECODE (2026-10-22). This used to be
+    # `except Exception: continue`, so a parquet whose audio column was
+    # unreadable would produce a SHORT corpus with no warning — and a
+    # corpus built short changes every AUC measured on it afterwards.
+    dropped = 0
     while (len(out[0]) < n_bona or len(out[1]) < n_spoof) and rg < pf.metadata.num_row_groups:
         t = pf.read_row_group(rg)
         rg += 1
@@ -93,7 +98,11 @@ def load_audio_rows(n_bona: int, n_spoof: int, seed: int):
             b = a["bytes"] if isinstance(a, dict) else a
             try:
                 x, sr = sf.read(io.BytesIO(b), dtype="float32")
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                dropped += 1
+                if dropped <= 3:
+                    print(f"  ⚠️ row {names[i]}: decode failed "
+                          f"({type(e).__name__}) — counted, not silently lost")
                 continue
             if x.ndim > 1:
                 x = x.mean(axis=1)
@@ -101,6 +110,14 @@ def load_audio_rows(n_bona: int, n_spoof: int, seed: int):
                 import scipy.signal as ss
                 x = ss.resample(x, 16000 / sr).astype(np.float32)
             out[k].append((names[i], x, sr))
+    if dropped:
+        print(f"  ⚠️ load_audio_rows: {dropped} parquet row(s) failed to "
+              f"decode and were DROPPED from the corpus")
+    for k, want in ((0, n_bona), (1, n_spoof)):
+        if len(out[k]) < want:
+            print(f"  ⚠️ CORPUS UNDER-FILLED: class {k} has {len(out[k])} of "
+                  f"{want} requested — every AUC measured on this corpus will "
+                  f"be over a smaller denominator")
     return out[0], out[1]
 
 

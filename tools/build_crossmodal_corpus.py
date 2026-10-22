@@ -60,6 +60,7 @@ def load_audio_rows(n_per_class):
     pf = pq.ParquetFile(AUDIO_PARQUET)
     out = {0: [], 1: []}
     rg = 0
+    dropped = 0
     while (len(out[0]) < n_per_class or len(out[1]) < n_per_class) and rg < pf.metadata.num_row_groups:
         t = pf.read_row_group(rg)
         rg += 1
@@ -73,7 +74,15 @@ def load_audio_rows(n_per_class):
             b = a["bytes"] if isinstance(a, dict) else a
             try:
                 x, sr = sf.read(io.BytesIO(b), dtype="float32")
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                # ⚠️ COUNTED, NOT SILENTLY LOST (2026-10-22). This used to be
+                # `except Exception: continue`: a parquet whose audio column
+                # was unreadable would build a SHORT corpus with no warning,
+                # and every AUC measured on it afterwards would be over a
+                # denominator nobody chose.
+                dropped += 1
+                if dropped <= 3:
+                    print(f"  ⚠️ row decode failed ({type(e).__name__}: {e})")
                 continue
             if x.ndim > 1:
                 x = x.mean(axis=1)
@@ -81,6 +90,14 @@ def load_audio_rows(n_per_class):
                 import scipy.signal as ss
                 x = ss.resample(x, 16000 / sr).astype(np.float32)
             out[k].append((nm, x, sr))
+    if dropped:
+        print(f"  ⚠️ load_audio_rows: {dropped} parquet row(s) failed to "
+              f"decode and were DROPPED from the corpus")
+    for k in (0, 1):
+        if len(out[k]) < n_per_class:
+            print(f"  ⚠️ CORPUS UNDER-FILLED: class {k} has {len(out[k])} of "
+                  f"{n_per_class} requested — every AUC measured on this "
+                  f"corpus will be over a smaller denominator")
     return out[0], out[1]
 
 

@@ -74,16 +74,81 @@ OP_REALS_PATH = pathlib.Path(
     "/home/hermes/.hermes/cache/scratch/operator_reals_signals.jsonl")
 
 
+# A COMPLETE dataset, not just a parseable file: the corpus has 60 clips, and
+# the harness that produces the crop dataset UNLINKS its output and then
+# appends one row per clip, so for the length of that run the file on disk is
+# a fragment.
+MIN_ROWS = 40
+
+# ⚠️ A DETECTION FLOOR THAT DESCRIBES ONLY ONE DATASET LIES ABOUT THE OTHER
+# (2026-10-22). `dnu >= 12` was written against the CROP dataset — the
+# shipped production path. When the crop file is absent (or, as happened
+# today, mid-write) `_rows()` falls back to the whole-frame dataset, where
+# the SAME assertion fails with the most alarming message available —
+# "the video channel must not be silently disarmed" — about a channel that
+# is fine. SEEN: `only 8/30 fakes flagged -- assert 8 >= 12`.
+#
+# MEASURED (30 fakes / 30 reals each):
+#   effort_crop  the shipped face-crop path  -> 13 DNU, 1 fp, 0 trust
+#   effort       the whole-frame fallback    ->  8 DNU, 1 fp, 0 trust
+#
+# So the floor is keyed by which dataset was loaded, with headroom below the
+# measured value in both cases. Never move the crop floor down to make the
+# fallback pass: the crop floor IS the shipped behaviour.
+DNU_FLOOR = {"effort_crop": 12, "effort": 6}
+
+
+def _sizes() -> str:
+    bits = []
+    for path in (CROP_ROWS_PATH, ROWS_PATH):
+        if not path.exists():
+            bits.append(f"{path.name}=absent")
+        else:
+            try:
+                bits.append(f"{path.name}={len(_load(path))} rows")
+            except Exception as e:  # noqa: BLE001
+                bits.append(f"{path.name}=unreadable({type(e).__name__})")
+    return ", ".join(bits)
+
+
 def _rows():
-    """The measured corpus, preferring the face-crop dataset."""
+    """The measured corpus, preferring the face-crop dataset.
+
+    ⚠️ A PARTIAL FILE IS NOT A MEASUREMENT (2026-10-22). This used to accept
+    ANY file that existed and parsed. `tools/score_video_signals_crop.py`
+    unlinks `video_signal_rows_crop.jsonl` and then appends one row per clip,
+    so while that harness runs the file holds a handful of rows — and the
+    suite went RED with:
+
+        only 0/0 fakes flagged — the video channel must not be silently
+        disarmed
+
+    which is the most alarming conclusion available, about a file that was
+    simply mid-write. (The `fn <= 13` ceiling test, meanwhile, PASSED over an
+    empty corpus — a vacuous green is the same defect from the other side.)
+
+    So a dataset counts only if it is COMPLETE: enough rows and BOTH classes
+    present. Otherwise it counts as absent and the test skips honestly,
+    naming what it saw.
+    """
     for path, key in ((CROP_ROWS_PATH, "effort_crop"), (ROWS_PATH, "effort")):
-        if path.exists():
-            data = _load(path)
-            if data:
-                for r in data:
-                    r["_effort_key"] = key
-                return data
-    return []
+        if not path.exists():
+            continue
+        # a torn last line is exactly what a mid-write append looks like, so a
+        # parse failure means "not complete yet", not "the suite exploded"
+        try:
+            data = _load(path) or []
+        except (json.JSONDecodeError, OSError):
+            continue
+        if len(data) < MIN_ROWS:
+            continue
+        if not {0, 1} <= {r.get("label") for r in data}:
+            continue
+        for r in data:
+            r["_effort_key"] = key
+        return data
+    pytest.skip(f"no COMPLETE measured video corpus on this host ({_sizes()}; "
+                f"need >= {MIN_ROWS} rows with both classes)")
 
 
 def _checks_from_row(r, *, with_cross_modal=True):
@@ -268,6 +333,10 @@ def test_no_fake_clip_reads_trust_on_the_leak_free_corpus():
     """
     rows = _rows()
     fakes = [r for r in rows if r["label"] == 1]
+    # a ceiling over an EMPTY corpus is a vacuous green -- guard the form
+    assert len(fakes) >= MIN_ROWS // 2, (
+        f"only {len(fakes)} fakes in the corpus — too few to say anything "
+        f"about a false-negative ceiling")
     fn = []
     for r in fakes:
         d = fe.decide("deepfake_video", _checks_from_row(r))
@@ -448,9 +517,11 @@ def test_video_detection_rate_is_reported_not_claimed_as_total():
               if fe.decide("deepfake_video", _checks_from_row(r)).verdict
               is Verdict.DO_NOT_USE)
     assert fp <= 1, f"false positives on genuine clips: {fp}/{len(reals)}"
-    assert dnu >= 12, (
-        f"only {dnu}/{len(fakes)} fakes flagged — the video channel must not "
-        "be silently disarmed")
+    floor = DNU_FLOOR[rows[0]["_effort_key"]]
+    assert dnu >= floor, (
+        f"only {dnu}/{len(fakes)} fakes flagged on the "
+        f"{rows[0]['_effort_key']} dataset (floor {floor}) — the video "
+        "channel must not be silently disarmed")
     # A fake that reads TRUST is the overclaim that matters most. The
     # measured count is 15/30; the ceiling is set with headroom so a
     # re-score does not fail the build, but a collapse toward 30 would.
@@ -511,3 +582,105 @@ def test_fully_generated_pattern_requires_the_cross_modal_signal_to_have_run():
         "deepfake_video", signals, gaps=["havic.prob_inconsistent"])
     assert pattern != "fully_generated", (
         "the fully_generated pattern fired while HAVIC was a known gap")
+
+
+# ---------------------------------------------------------------------------
+# 6. The FIXTURE must not turn a mid-write file into a verdict (2026-10-22).
+# ---------------------------------------------------------------------------
+def _write_rows(path, n, *, label=0):
+    """Write a measured-corpus fragment.
+
+    `label=None` alternates 0/1 so the fragment has BOTH classes — a partial
+    corpus must be rejected on its ROW COUNT alone, otherwise a labels check
+    can mask a missing row-count check (it did: mutation P1 was missed on the
+    first version of these tests).
+    """
+    import json as _json
+    path.write_text("\n".join(
+        _json.dumps({"path": f"/x/{i}.mp4",
+                     "label": (i % 2) if label is None else label,
+                     "effort": 0.5, "effort_crop": 0.5}) for i in range(n)) + "\n")
+    return path
+
+
+def test_a_partial_corpus_is_absent_not_a_red_suite(monkeypatch, tmp_path):
+    """A trunctated dataset is SKIPPED, not asserted over.
+
+    `tools/score_video_signals_crop.py` unlinks its output and appends one
+    row per clip. Reading it mid-run used to hand the assertions a 2-row
+    corpus, which produced 'only 0/0 fakes flagged -- the video channel must
+    not be silently disarmed': the most alarming available conclusion, about
+    a file that was simply being written.
+
+    A HARD SKIP is the honest outcome: the measurement does not exist yet.
+    """
+    partial = _write_rows(tmp_path / "partial.jsonl", 2, label=None)
+    monkeypatch.setattr("test_61_video_calibration.CROP_ROWS_PATH", partial)
+    monkeypatch.setattr("test_61_video_calibration.ROWS_PATH",
+                        tmp_path / "absent.jsonl")
+    with pytest.raises(pytest.skip.Exception) as exc:
+        _rows()
+    assert "COMPLETE" in str(exc.value), (
+        "the skip reason must say what is missing, so a permanently broken "
+        "corpus cannot hide behind a silent skip")
+
+
+def test_a_torn_last_line_is_treated_as_incomplete(monkeypatch, tmp_path):
+    """A half-written JSON line must not crash the suite either."""
+    torn = tmp_path / "torn.jsonl"
+    _write_rows(torn, 41)
+    torn.write_text(torn.read_text() + '{"path": "/x/torn.mp4", "lab')
+    monkeypatch.setattr("test_61_video_calibration.CROP_ROWS_PATH", torn)
+    monkeypatch.setattr("test_61_video_calibration.ROWS_PATH",
+                        tmp_path / "absent.jsonl")
+    with pytest.raises(pytest.skip.Exception):
+        _rows()
+
+
+def test_a_complete_corpus_is_returned_and_keyed(monkeypatch, tmp_path):
+    """Guard the guard: the complete case must still hand back rows."""
+    complete = tmp_path / "complete.jsonl"
+    _write_rows(complete, MIN_ROWS // 2, label=0)
+    with complete.open("a") as fh:
+        for i in range(MIN_ROWS // 2):
+            fh.write(json.dumps({"path": f"/y/{i}.mp4", "label": 1,
+                                 "effort": 0.5, "effort_crop": 0.5}) + "\n")
+    monkeypatch.setattr("test_61_video_calibration.CROP_ROWS_PATH", complete)
+    monkeypatch.setattr("test_61_video_calibration.ROWS_PATH",
+                        tmp_path / "absent.jsonl")
+    rows = _rows()
+    assert len(rows) == MIN_ROWS
+    assert {r["_effort_key"] for r in rows} == {"effort_crop"}, (
+        "the loaded dataset must be tagged, because the detection FLOOR "
+        "depends on which dataset it is")
+
+
+@pytest.mark.skipif(not ROWS_PATH.exists(),
+                    reason="the whole-frame fallback dataset was not scored here")
+def test_the_fallback_dataset_floor_is_its_own_number():
+    """The FALLBACK dataset must be judged by its own floor, not the crop's.
+
+    MEASURED 2026-10-22 (30 fakes / 30 reals, production fusion engine):
+      * whole-frame `effort`      ->  8 DNU of 30, 1 false positive, 0 trust
+      * face-crop    `effort_crop` -> 13 DNU of 30, 1 false positive, 0 trust
+
+    Reusing 12 (the crop floor) on the fallback fails with "the video channel
+    must not be silently disarmed" — which is alarming, specific, and FALSE.
+    That is exactly how the suite went red while the crop dataset was being
+    rewritten, first because the fragment had no fakes and then because the
+    fallback inherited a floor that was never measured on it.
+    """
+    rows = [r for r in (_load(ROWS_PATH) or []) if "effort" in r]
+    for r in rows:
+        r["_effort_key"] = "effort"
+    reals = [r for r in rows if r["label"] == 0]
+    fakes = [r for r in rows if r["label"] == 1]
+    assert reals and fakes, "the fallback dataset has one class — not a corpus"
+    dnu = sum(1 for r in fakes
+              if fe.decide("deepfake_video", _checks_from_row(r)).verdict
+              is Verdict.DO_NOT_USE)
+    floor = DNU_FLOOR["effort"]
+    assert dnu >= floor, (
+        f"the whole-frame fallback flags {dnu}/{len(fakes)} fakes, below its "
+        f"own floor of {floor} — the fallback dataset's separation changed, "
+        f"and the crop dataset is NOT the thing to compare it against")

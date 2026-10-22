@@ -34,6 +34,7 @@ WHAT THIS PINS
 """
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -143,3 +144,186 @@ def test_the_video_channel_also_counts_its_skips():
         "dropped clip must be COUNTED so the shortfall is visible")
     assert re.search(r"skipped", body), (
         "the video probe does not count its failures at all")
+
+
+# ⚠️ THE PER-CHANNEL TESTS ABOVE ARE WHY THE AUDIO CHANNEL WAS MISSED
+# (2026-10-22). PR #34 fixed the image bug and pinned the image and video
+# channels BY NAME — and the audio channel was left with TWO bare
+# `except Exception: continue` (the sf.read decode and the sf.write to
+# disk), so a corpus row that failed to decode still vanished without a
+# count. The docstring claimed "no channel in the probe may swallow a
+# failure without counting it"; the tests only enforced it for two of the
+# three channels.
+#
+# ⇒ A RULE ENFORCED CHANNEL-BY-CHANNEL IS A RULE THAT DECAYS EVERY TIME A
+#   CHANNEL IS ADDED. Enforce it over EVERY `probe_*` function instead.
+def test_every_channel_counts_what_it_swallows():
+    """EVERY `except: continue` in EVERY channel must increment a counter.
+
+    This is the generic form of the image/video checks above: it catches a
+    new channel the day it is added, instead of the day someone remembers
+    to write a test for it.
+
+    Parsed with `ast`, not with a regex: a regex that grabs "the indented
+    lines after the except" swallows the NEXT handler too, and then finds
+    that handler's `+= 1` and clears the guilty one. (That is not a
+    hypothetical — the first version of this test did exactly that and
+    MISSED a reintroduced audio drop.)
+    """
+    src = _src()
+    tree = ast.parse(src)
+    channels = [n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name.startswith("probe_")]
+    assert len(channels) >= 3, (
+        "expected at least the audio, image and video channels, found "
+        f"{[c.name for c in channels]}")
+    offenders = []
+    for fn in channels:
+        for h in [n for n in ast.walk(fn) if isinstance(n, ast.ExceptHandler)]:
+            body = [n for n in ast.walk(h)]
+            if not any(isinstance(n, ast.Continue) for n in body):
+                continue
+            # A handler is allowed to `continue` if it leaves a TRACE:
+            #   * a counter  -- `skipped += 1` / `n = n + 1`; or
+            #   * a record   -- `out.append({"gate": ..., "error": ...})`,
+            #     which is how a failed gate LOAD is reported: it is not a
+            #     dropped corpus item, it is a diagnosis the caller prints.
+            # What is forbidden is the bare `except: continue` that leaves
+            # nothing behind.
+            counted = any(isinstance(n, ast.AugAssign) for n in body) or any(
+                isinstance(n, ast.Assign)
+                and isinstance(n.value, ast.BinOp)
+                and isinstance(n.value.op, ast.Add) for n in body)
+            recorded = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr in {"append", "extend"} for n in body)
+            if not (counted or recorded):
+                offenders.append(f"{fn.name}():{h.lineno}")
+    assert not offenders, (
+        "these handlers swallow a failure with `continue` and count nothing, "
+        f"so a dropped corpus item is invisible: {offenders}")
+
+
+def test_the_audio_channel_counts_dropped_corpus_items(monkeypatch, tmp_path):
+    """BEHAVIOURAL: a row that fails to decode must be COUNTED, not lost.
+
+    The static test above pins the SHAPE. This one proves the counter moves
+    on a payload the probe has to drop — because a counter that is
+    incremented in no reachable branch is just as silent as no counter.
+
+    The heavy dependencies (pyarrow, soundfile, the vishwas capability and
+    adapter modules) are stubbed: this test is about the probe's
+    bookkeeping, not about a model.
+    """
+    import importlib.util
+    import sys
+    import types
+
+    probe_path = REPO / "tools" / "probe_gate_accuracy.py"
+    if not probe_path.exists():
+        import pytest
+        pytest.skip("the gate accuracy probe is not present")
+
+    # --- the corpus: 4 rows, row 1 fails to DECODE, row 2 fails to WRITE
+    rows = [{"bytes": f"row{i}".encode()} for i in range(4)]
+
+    class _Table:
+        def __init__(self, cols):
+            self._cols = cols
+
+        def column(self, name):
+            class _Col:
+                def __init__(self, vals):
+                    self._vals = vals
+
+                def to_pylist(self):
+                    return self._vals
+            return _Col(self._cols[name])
+
+    fake_pq = types.ModuleType("pyarrow.parquet")
+    fake_pq.read_table = lambda path, columns=None: _Table(
+        {"audio": rows, "key": [0, 0, 1, 1]})
+    fake_pyarrow = types.ModuleType("pyarrow")
+    fake_pyarrow.parquet = fake_pq
+
+    calls = {"read": 0, "write": 0}
+
+    class _Wave(list):
+        """A 1-D waveform stand-in: `ndim` is what the probe reads."""
+        ndim = 1
+
+    def _read(buf, dtype=None):
+        calls["read"] += 1
+        if calls["read"] == 2:
+            raise RuntimeError("decode failed")
+        return _Wave([0.0] * 16), 16000
+
+    def _write(path, data, sr):
+        calls["write"] += 1
+        if calls["write"] == 2:
+            raise OSError("disk full")
+
+    fake_sf = types.ModuleType("soundfile")
+    fake_sf.read = _read
+    fake_sf.write = _write
+
+    fake_audio = types.ModuleType("vishwas.capabilities.deepfake_audio")
+    fake_audio._infer_prob = lambda gate, model, path: 0.9
+
+    class _Gate:
+        def load(self, path):
+            return object()
+
+    fake_adapters = types.ModuleType("vishwas.model_adapters")
+    fake_adapters.resolve = lambda env_var: _Gate()
+
+    fake_pkg = types.ModuleType("vishwas")
+    fake_pkg.__path__ = []
+    fake_caps = types.ModuleType("vishwas.capabilities")
+    fake_caps.__path__ = []
+    fake_pkg.capabilities = fake_caps
+    fake_caps.deepfake_audio = fake_audio
+    fake_pkg.model_adapters = fake_adapters
+
+    for name, mod in [("pyarrow", fake_pyarrow),
+                      ("pyarrow.parquet", fake_pq),
+                      ("soundfile", fake_sf),
+                      ("vishwas", fake_pkg),
+                      ("vishwas.capabilities", fake_caps),
+                      ("vishwas.capabilities.deepfake_audio", fake_audio),
+                      ("vishwas.model_adapters", fake_adapters)]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    # the probe makes its own temp tree at import; keep it inside tmp_path
+    import tempfile
+    monkeypatch.setattr(tempfile, "mkdtemp",
+                        lambda **kw: str(tmp_path / "probe-q"))
+
+    spec = importlib.util.spec_from_file_location("_probe_under_test",
+                                                  probe_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # point the gate env vars at a real file so the is-file preflight passes,
+    # and give the module a parquet path that EXISTS (its contents are stubbed)
+    weight = tmp_path / "fake_gate.pth"
+    weight.write_bytes(b"not a checkpoint")
+    monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", str(weight))
+    monkeypatch.delenv("VISHWAS_XLSRMAMBA_WEIGHTS", raising=False)
+    parquet = tmp_path / "fake.parquet"
+    parquet.write_bytes(b"")
+    mod.PARQUET = parquet
+    mod.Q = tmp_path / "probe-q"
+
+    recs = mod.probe_audio(n=60)
+    rec = recs[0]
+    assert rec["gate"] == "aasist3"
+    assert "skipped" in rec, (
+        "the audio record has no `skipped` field, so a dropped corpus item "
+        "cannot be reported")
+    assert rec["skipped"] == 2, (
+        f"expected 2 counted drops (1 decode + 1 write), got {rec['skipped']}")
+    assert rec["n"] == 2, (
+        f"expected the 2 scoreable rows to be scored, got n={rec['n']}")
+
