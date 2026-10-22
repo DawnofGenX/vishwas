@@ -40,6 +40,118 @@ _NYUAD_HELPER = str(Path(__file__).resolve().parents[3] / "scripts" / "image_sco
 _VENV_AMBIENT_PY = "/home/hermes/.venv-ambient/bin/python"
 _NYUAD_SUBPROC_TIMEOUT_S = 120
 
+# ---------------------------------------------------------------------------
+# GENIMAGE — the THIRD image signal (2026-10-22)
+# ---------------------------------------------------------------------------
+# The image channel had exactly TWO independent signals (SPAI and NYUAD) and
+# they could not separate the two groups that matter: 5 genuine photos
+# flagged by NYUAD alone, and 9 AI images caught by NYUAD alone. Both groups
+# carry the SAME signature (SPAI low, NYUAD high), so no rule over
+# (SPAI, NYUAD) can separate them — the fusion layer's own comment says a
+# THIRD signal is required.
+#
+# The upstream EFFORT project (YZY-stack/Effort-AIGI-Detection) ships three
+# checkpoints of the same architecture: chameleon (face/spatial), ffpp (face
+# forensics, IN USE for video) and genimage (GENERAL AIGC image detection,
+# trained on GenImage/SD-v1.4). genimage was NOT on this host; it was
+# fetched from the upstream public Drive folder and hash-verified against the
+# manifest (sha256_first12 7c32ceb4e66d).
+#
+# MEASURED on the raw 60-image corpus through the production path:
+#     genimage AUC 0.9211  (AI median 0.9970, real median 0.4334)
+# and it separates the two groups SPAI+NYUAD could not:
+#     real photos NYUAD-only (5): genimage 0.3813 .. 0.9991
+#     AI images  NYUAD-only (9): genimage 0.9442 .. 0.9999
+#     best threshold 0.9855 -> catches 8/9 AI, flags 1/5 real
+#
+# IT IS AN IMAGE DETECTOR, NOT A VIDEO DETECTOR. Measured on the operator's
+# AI VIDEO frames it is INVERTED (AI 0.037/0.107/0.098 vs real
+# 0.225/0.064/0.277) — h264 compression plus the adapter's center-crop on a
+# wide frame destroy the signal. So it is wired into the IMAGE channel only
+# and must never be used to score video frames.
+#
+# The checkpoint uses the SAME architecture as the EFFORT gate (CLIP ViT-L/14
+# + OrthAlign), so it loads through the same adapter/spec — but under its OWN
+# env var, because the video channel's VISHWAS_EFFORT_WEIGHTS must keep
+# pointing at the ffpp checkpoint.
+_GENIMAGE_DEFAULT = "/opt/vishwas/models/effort/genimage/effort_genimage.pth"
+_GENIMAGE_ENV = "VISHWAS_EFFORT_GENIMAGE_WEIGHTS"
+
+
+def _genimage_path() -> Path:
+    return Path(os.environ.get(_GENIMAGE_ENV, _GENIMAGE_DEFAULT))
+
+
+def _genimage_prob(img: np.ndarray | None) -> float | None:
+    """Score one image with the genimage (general-AIGC) EFFORT checkpoint.
+
+    Returns p_fake in [0,1], or None if the checkpoint or the model is not
+    available. NEVER fabricates a score: an unavailable checkpoint must
+    degrade the channel to an honest 'unavailable' check, not to a fake
+    'clean' reading.
+
+    The same adapter/spec as the EFFORT gate is used (identical architecture),
+    but the weights come from the genimage checkpoint and the model is built
+    from the image (NOT the face crop — genimage is a whole-image detector).
+    """
+    if img is None:
+        return None
+    path = _genimage_path()
+    if not path.exists():
+        return None
+    try:
+        from ..model_adapters import resolve as _resolve
+        from ..model_archs.effort import get_arch
+
+        spec = get_arch()
+        model = spec.build()
+        import torch
+
+        sd = torch.load(str(path), map_location="cpu", weights_only=False)
+        if isinstance(sd, dict) and "state_dict" in sd:
+            sd = sd["state_dict"]
+        if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
+            sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+        if not spec.apply_state(model, sd):
+            return None
+        model.eval()
+        dev = resolve_device()
+        model.to(dev)
+
+        chw = _preprocess_chw(img)
+        x = torch.from_numpy(chw).unsqueeze(0).to(dev)
+        with torch.no_grad():
+            logits = model(x)
+            if isinstance(logits, (tuple, list)):
+                logits = logits[0]
+            p = torch.softmax(logits.float(), dim=-1)[0, 1].item()
+        return min(1.0, max(0.0, float(p)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("genimage scoring failed (%s: %s) — third image signal unavailable",
+                    type(exc).__name__, exc)
+        return None
+
+
+def _preprocess_chw(img: np.ndarray) -> np.ndarray:
+    """BGR HWC uint8 -> CHW float32, CLIP-normalised, 224x224.
+
+    Mirrors the EFFORT gate's own preprocessing: center-crop square, resize to
+    224, BGR->RGB, then CLIP's normalisation (mean [0.48145466, 0.4578275,
+    0.40821073], std [0.26862954, 0.26130258, 0.27577711]).
+    """
+    import cv2
+
+    h, w = img.shape[:2]
+    s = min(h, w)
+    y0, x0 = (h - s) // 2, (w - s) // 2
+    crop = img[y0:y0 + s, x0:x0 + s]
+    resized = cv2.resize(crop, (224, 224), interpolation=cv2.INTER_AREA)
+    rgb = resized[:, :, ::-1].astype(np.float32) / 255.0
+    chw = np.transpose(rgb, (2, 0, 1))
+    mean = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
+    std = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+    return ((chw - mean[:, None, None]) / std[:, None, None]).astype(np.float32)
+
 
 def _subprocess_nyuad_score(path: Path, timeout_s: float = _NYUAD_SUBPROC_TIMEOUT_S) -> float | None:
     """Score one image via the .venv-ambient NYUAD helper. Returns p_fake in [0,1]
@@ -240,6 +352,26 @@ class ImageFaceCheckCapability:
                                    {"prob_deepfake": round(_nyuad_p, 3),
                                     "source": "nyuad.subprocess(.venv-ambient)"},
                                    "NYUAD 3-class AI-image detector pass"))
+        # GENIMAGE — the THIRD independent image signal (2026-10-22).
+        # Measured on the raw 60-image corpus: AUC 0.9211 (AI median 0.9970,
+        # real median 0.4334) — the best single signal on this corpus, and the
+        # one that separates the two groups SPAI+NYUAD could not (5 real
+        # photos flagged by NYUAD alone vs 9 AI images caught by NYUAD alone,
+        # all with the SAME SPAI-low/NYUAD-high signature).
+        # It runs on the FULL-RESOLUTION image, not the 512x512 resize used
+        # by the freqband heuristic.
+        _gen_p = _genimage_prob(heavy_img)
+        if _gen_p is None:
+            out.append(CheckResult("genimage_image_detector", "heavy", "unavailable",
+                                   {"missing_dependency": "model-weights"},
+                                   "genimage general-AIGC detector unavailable "
+                                   "(checkpoint not provisioned); SPAI+NYUAD carry the image channel"))
+        else:
+            out.append(CheckResult("genimage_image_detector", "heavy", "ok",
+                                   {"prob_deepfake": round(_gen_p, 3),
+                                    "source": "effort.genimage"},
+                                   "EFFORT genimage (GenImage/SD-v1.4) general-AIGC pass — "
+                                   "third independent image signal"))
         out.extend(self._qr_evidence_for_gov_image(art))
         return out
 
