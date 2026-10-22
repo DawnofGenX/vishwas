@@ -40,23 +40,42 @@ def _default_heavy_stage_budget() -> float:
     """Seconds a single heavy (learned-model) stage may take before the
     orchestrator stops waiting and returns the job as pending_heavy.
 
-    The default was 30s, which was sized for a host where the learned
-    detectors were NOT installed (so no heavy stage ever ran and the budget
-    was never reached). Once the detectors actually load, 30s is too tight:
-    measured 2026-10-21 on this host, a cold aasist3 load is 7.0s and a
-    cold xlsr-mamba load is 4.7s, and the deepfake_video stage (frame
-    extraction + EFFORT over 8 frames + the 5-variant transform battery)
-    takes ~27s. At 30s the audio and video channels both expired
-    mid-stage and returned `unable_to_verify` with `pending_heavy` — the
-    verdict was never computed.
+    ⚠️ THIS DEFAULT WAS WRONG UNTIL 2026-10-22, AND IT WAS WRONG QUIETLY.
 
-    120s comfortably covers the measured worst case (a cold load of every
-    learned gate plus the transform battery) while still bounding a stage
-    that has genuinely hung. The per-job envelope (VISHWAS_BUDGET_S, 300s
-    default) remains the outer limit, so a stage can never exceed the job
-    budget; this is the inner per-stage allowance.
+    The history: the default was 30s, sized for a host where the learned
+    detectors were NOT installed (so no heavy stage ever ran and the
+    budget was never reached). It was raised to 120s on 2026-10-21 from
+    that day's measurements: "cold aasist3 load 7.0s, cold xlsr-mamba
+    load 4.7s, deepfake_video stage ~27s".
+
+    **Those numbers no longer hold on this host.** Re-measured 2026-10-22:
+        aasist3 checkpoint LOAD (cold)   63.1 s
+        one aasist3 inference             17.6 s
+        the audio lane (3 crops)         ~241 s
+        the video lane, cold cache        147 s
+    And CUDA barely helps (66.3 s vs 80.5 s) because the cost is the
+    LOAD, not the compute.
+
+    **⇒ AT 120s THE AUDIO AND VIDEO LANES RETURNED `UNVERIFIED` WITH
+    `pending_heavy` ON REAL MEDIA** -- a correct verdict when the page
+    cache was warm and no verdict when it was cold. The models were fine
+    (aasist3 and xlsr both AUC 1.0000); the PIPELINE TIMED OUT.
+
+    The aasist3 lane now loads the checkpoint ONCE for all its crops
+    (PR #28), so the audio lane is ~1 load + N inferences. 240s covers
+    the measured cold worst case with headroom, and still bounds a stage
+    that has genuinely hung.
+
+    The per-job envelope (VISHWAS_BUDGET_S, 300s default) remains the
+    outer limit, so a stage can never exceed the job budget; this is the
+    inner per-stage allowance.
+
+    **LESSON: A BUDGET MEASURED ON A DIFFERENT DAY IS A GUESS.** Nothing
+    in the code changed on 2026-10-22 -- the HOST's cost changed, and a
+    hardcoded default silently became wrong. If the load cost moves, this
+    number must move with it.
     """
-    return float(os.environ.get("VISHWAS_HEAVY_STAGE_BUDGET_S", "120"))
+    return float(os.environ.get("VISHWAS_HEAVY_STAGE_BUDGET_S", "240"))
 
 
 @dataclass(slots=True)
