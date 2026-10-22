@@ -1,6 +1,33 @@
 #!/usr/bin/env python3
 """MEASURE: does cropping to the FACE region improve EFFORT on video?
 
+⚠️⚠️ THIS HARNESS MEASURES A **REJECTED** CROP — ITS NUMBERS ARE NOT THE
+SHIPPED CONFIGURATION'S NUMBERS. (added 2026-10-22)
+--------------------------------------------------------------------
+This script has its OWN hand-rolled crop. It does NOT call the production
+`deepfake_video._effort_face_crop`, and the two differ in two ways that
+PR #12 fixed in production:
+
+  1. FACE ORDERING — production picks the LARGEST-AREA box. This harness
+     orders by YuNet's 5th column, which is a RAW detection score (it reads
+     ~120 here, not 0..1), so that ordering is meaningless.
+  2. MINIMUM FACE SIZE — production uses a FRACTION of the frame area
+     (0.05%). This harness uses a 16-pixel floor, which rejects exactly the
+     small distant faces that matter on the operator's wide street shots.
+
+THE NUMBERS THIS PRINTS:
+    face13  AUC 0.7711   <- THIS harness's crop (REJECTED)
+    full    AUC 0.7189
+
+THE SHIPPED NUMBERS (from tools/score_video_signals_crop.py, which uses the
+PRODUCTION crop):
+    crop    AUC 0.7789   <- the shipped configuration
+    full    AUC 0.7189
+
+BOTH ARE CORRECT — THEY MEASURE DIFFERENT CROPS. If you are checking the
+shipped configuration, use `tools/score_video_signals_crop.py`, NOT this
+script. The "full" row agrees (0.7189) because that path is identical.
+
 WHY
 ---
 EFFORT is a FACE-forensics model. The upstream paper (YZY-stack/Effort-
@@ -202,10 +229,29 @@ for key in ("full", "face13", "face10"):
         continue
     a = auc(fakes, reals)
     e = eer(fakes, reals)
-    tag = "  <- production path" if key == "full" else ""
+    tag = "  <- production path (whole frame)" if key == "full" else ""
     print(f"  {key:<8s} n={len(reals)+len(fakes):2d}  AUC={a:.4f}  EER={e[0]*100:5.2f}%  "
           f"real med={st.median(reals):.4f}  fake med={st.median(fakes):.4f}{tag}")
 print()
 print(f"  clips with a detected face: "
       f"{sum(1 for r in out_rows if r['n_faces'] > 0)}/{len(out_rows)}")
 print(f"  wrote {len(out_rows)} rows -> {OUT}")
+print()
+print("!" * 92)
+print("!! READ THIS BEFORE QUOTING THE NUMBERS ABOVE")
+print("!!")
+print("!!  The 'face13' and 'face10' rows measure THIS SCRIPT'S OWN crop, not")
+print("!!  the shipped one. It differs from the production")
+print("!!  deepfake_video._effort_face_crop in two ways PR #12 fixed:")
+print("!!    - face ordering: production picks the LARGEST-AREA box; this")
+print("!!      harness orders by YuNet's raw 5th column (reads ~120, not 0..1)")
+print("!!    - minimum face size: production uses a FRACTION of the frame area")
+print("!!      (0.05%); this harness uses a 16-pixel floor")
+print("!!")
+print("!!  THE SHIPPED NUMBERS are in tools/score_video_signals_crop.py, which")
+print("!!  uses the PRODUCTION crop:")
+print("!!      full 0.7189    crop 0.7789   <- the shipped configuration")
+print("!!  This script prints 0.7711 for its own crop. BOTH ARE CORRECT --")
+print("!!  THEY MEASURE DIFFERENT CROPS. Do not conclude the shipped crop is")
+print("!!  worse, and do not treat the two as contradictory.")
+print("!" * 92)

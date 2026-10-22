@@ -159,8 +159,10 @@ class DeepfakeVideoCapability:
             # EFFORT is a FACE-forensics model; the upstream paper applies it
             # to face regions. Cropping to the detected face (with a
             # whole-frame fallback) measurably improves the separation:
-            # AUC 0.7189 -> 0.7711 on the leak-free corpus, with 20/30 fakes
+            # AUC 0.7189 -> 0.7789 on the leak-free corpus, with 20/30 fakes
             # scoring higher and 13/30 reals scoring lower.
+            # (2026-10-22: this said 0.7711, which was the number for a
+            #  REJECTED crop -- see _effort_face_crop's docstring.)
             crop = _effort_face_crop(img)
             if crop is not None and crop.shape[:2] != img.shape[:2]:
                 n_face += 1
@@ -366,10 +368,21 @@ def _effort_face_crop(img: np.ndarray | None) -> np.ndarray | None:
     operator's own genuine clips has no detectable face on any sampled
     frame, so a crop-only path would have no signal for it.
 
-    Measured on the leak-free 60-clip corpus (production code paths):
+    Measured on the leak-free 60-clip corpus (production code paths,
+    tools/score_video_signals_crop.py):
         whole frame   AUC 0.7189   real med 0.4762  fake med 0.6190
-        face crop     AUC 0.7711   real med 0.4619  fake med 0.6881
+        face crop     AUC 0.7789   real med 0.4619  fake med 0.6881
     20/30 fakes score higher with the crop and 13/30 reals score lower.
+
+    2026-10-22: this comment used to say 0.7711, which was WRONG — it quoted
+    tools/eval_effort_face_crop.py, a harness with its OWN hand-rolled crop
+    (it orders faces by YuNet's raw 5th column, which reads ~120 and is not
+    a 0..1 score, and it uses a 16-pixel minimum face size). The two
+    harnesses measure DIFFERENT crops, so their numbers are not comparable:
+    that harness prints 0.7711 for ITS crop, and this production crop
+    measures 0.7789. Both are correct; only this one describes the shipped
+    configuration. The stale harness now says so in its own output.
+    See tests/test_68_face_crop_auc_provenance.py.
 
     The cost, stated: the crop also raises SOME genuine clips (a
     low-quality phone face can read as synthetic). The fused operating point

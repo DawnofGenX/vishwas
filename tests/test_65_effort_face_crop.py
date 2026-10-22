@@ -16,7 +16,12 @@ tooling is already a dependency of this project.
 MEASURED on the leak-free corpus (60 real files, production code paths):
 
     whole frame (before)   AUC 0.7189   real med 0.4762  fake med 0.6190
-    YuNet face, 1.3x       AUC 0.7711   real med 0.4619  fake med 0.6881
+    YuNet face, 1.3x       AUC 0.7789   real med 0.4619  fake med 0.6881
+
+(2026-10-22: the face row said 0.7711. That was the number for a REJECTED
+crop -- tools/eval_effort_face_crop.py has its OWN hand-rolled crop. The
+production crop measures 0.7789; both harnesses now say which is which. See
+tests/test_68_face_crop_auc_provenance.py.)
 
 The effect is real, not noise: 20 of 30 fakes' scores ROSE with the crop and
 13 of 30 reals' scores FELL. A face was detected on 60/60 clips.

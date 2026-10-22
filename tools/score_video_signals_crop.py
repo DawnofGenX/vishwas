@@ -126,3 +126,12 @@ for key in ("effort_full", "effort_crop"):
     print(f"  {key:<14s} AUC={auc(fv, rv):.4f}  real med={st.median(rv):.4f}  "
           f"fake med={st.median(fv):.4f}  gap={st.median(fv)-st.median(rv):+.4f}")
 print(f"\n  wrote {len(out)} rows -> {OUT}")
+print()
+print("  EXPECTED (measured 2026-10-21, reproduced 2026-10-22):")
+print("    effort_full  AUC=0.7189  real med=0.4762  fake med=0.6190")
+print("    effort_crop  AUC=0.7789  real med=0.4619  fake med=0.6881")
+print()
+print("  THIS is the authoritative harness for the shipped face crop.")
+print("  tools/eval_effort_face_crop.py measures a DIFFERENT (rejected) crop")
+print("  and prints 0.7711 for it -- both are correct, they are not the same")
+print("  measurement. Do not mix the two.")
