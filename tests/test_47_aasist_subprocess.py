@@ -60,8 +60,19 @@ def test_multicrop_subprocess_fallback_with_provisioned_but_broken_arch(monkeypa
 
     monkeypatch.setattr(daudio, "_load_weights", _fake_load)
     monkeypatch.setattr(daudio, "_VENV_AMBIENT_PY", sys.executable)
+    # The helper is now called ONCE with ALL the crops (2026-10-22), so it
+    # must print ONE posterior per crop. A fake helper that printed a
+    # single score broke the "one posterior per crop" contract and the
+    # capability degraded to `unavailable` — which is the CORRECT
+    # behaviour for a count mismatch, and the test caught it.
     helper = tmp_path / "fake_helper.py"
-    helper.write_text("import sys\nprint('0.92')\n")
+    helper.write_text(
+        "import sys\n"
+        "# one posterior per file, in order (the batched helper's contract)\n"
+        "for _ in sys.argv[1:]:\n"
+        "    if _ == '--device':\n"
+        "        break\n"
+        "    print('0.92')\n")
     monkeypatch.setattr(daudio, "_AASIST3_HELPER", str(helper))
     monkeypatch.setenv("VISHWAS_AASIST_WEIGHTS", str(tmp_path / "model.safetensors"))
     (tmp_path / "model.safetensors").write_bytes(b"x")

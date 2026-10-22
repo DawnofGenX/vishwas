@@ -40,25 +40,48 @@ log = logging.getLogger(__name__)
 # in-process arch is unavailable. Score-of-record polarity matches Track C.
 _AASIST3_HELPER = str(Path(__file__).resolve().parents[3] / "scripts" / "audio_score_aasist3.py")
 _VENV_AMBIENT_PY = "/home/hermes/.venv-ambient/bin/python"
-_AASIST3_SUBPROC_TIMEOUT_S = 150  # first load ~37s + inference; bounded
+# ⚠️ THE TIMEOUT MUST COVER ONE LOAD + N INFERENCES (2026-10-22).
+# It used to be 150 s, sized for "first load ~37s + inference" — but the
+# load is now MEASURED at 63.1 s cold, and a 3-crop call is
+# 1 load + 3 inferences = ~116 s. The old figure was below the real cost.
+_AASIST3_SUBPROC_TIMEOUT_S = 300  # one cold load (63s) + N inferences
 
 
-def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIST3_SUBPROC_TIMEOUT_S) -> float | None:
-    """Score one crop via the .venv-ambient helper. Returns spoof posterior [0,1]
-    or None on any failure (never fabricates).
+def _subprocess_aasist3_scores(crops: list[Path], device: str,
+                                timeout_s: float = _AASIST3_SUBPROC_TIMEOUT_S
+                                ) -> list[float] | None:
+    """Score ALL crops in ONE subprocess, with ONE checkpoint load.
 
-    A None return downgrades the audio channel to missing_dependency, i.e. real
-    deepfake audio scores LOW — this lane fails OPEN. So every failure mode is
-    logged loudly rather than swallowed: a silently dead interpreter (the
-    .venv-ambient tree is an out-of-tree dependency that can break on its own)
-    must be visible, not inferred from a suspicious absence of signal.
+    Returns a list of spoof posteriors [0,1] (one per crop, in order), or
+    None on any failure (never fabricates).
 
-    The subprocess also runs with a CLEAN PYTHONPATH: the webhook's inherited
-    docling-python/pylibs shadow .venv-ambient's own numpy/transformers (the
-    broken numpy._core._multiarray_umath breaks torch imports), so we strip
-    PYTHONPATH and let the venv's site-packages win.
+    ⚠️ WHY ONE CALL AND NOT ONE PER CROP (2026-10-22). The helper used
+    to take exactly one file, so this shelled out once per crop and the
+    Spectra-AASIST3 checkpoint was RELOADED every time. Measured on this
+    host: a cold load is 63.1 s and an inference is 17.6 s, so a 3-crop
+    verdict cost ~241 s against a 120 s heavy-stage budget — and the lane
+    returned `UNVERIFIED` with `pending_heavy` on real media.
+
+    The load dominates (CUDA barely helps: 66.3 s vs 80.5 s), so the
+    fix is to load ONCE and score every crop in the same process:
+    1 load + N inferences, i.e. ~116 s for 3 crops.
+
+    A None return downgrades the audio channel to missing_dependency, i.e.
+    real deepfake audio scores LOW — this lane fails OPEN. So every
+    failure mode is logged loudly rather than swallowed: a silently dead
+    interpreter (the .venv-ambient tree is an out-of-tree dependency that
+    can break on its own) must be visible, not inferred from a suspicious
+    absence of signal.
+
+    The subprocess also runs with a CLEAN PYTHONPATH: the webhook's
+    inherited docling-python/pylibs shadow .venv-ambient's own
+    numpy/transformers (the broken numpy._core._multiarray_umath breaks
+    torch imports), so we strip PYTHONPATH and let the venv's
+    site-packages win.
     """
     import copy
+    if not crops:
+        return []
     venv_env = copy.deepcopy(dict(os.environ))
     venv_env.pop("PYTHONPATH", None)  # let .venv-ambient site-packages resolve
     if not os.path.exists(_VENV_AMBIENT_PY):
@@ -69,10 +92,12 @@ def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIS
             _VENV_AMBIENT_PY,
         )
         return None
+    cmd = [_VENV_AMBIENT_PY, _AASIST3_HELPER]
+    cmd += [str(c) for c in crops]
+    cmd += ["--device", device or "cpu"]
     try:
-        r = subprocess.run(
-            [_VENV_AMBIENT_PY, _AASIST3_HELPER, str(crop), "--device", device or "cpu"],
-            capture_output=True, text=True, timeout=timeout_s, env=venv_env)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout_s, env=venv_env)
     except Exception as exc:
         log.warning("aasist3 helper failed to execute (%s: %s) — audio degraded",
                     type(exc).__name__, exc)
@@ -81,16 +106,41 @@ def _subprocess_aasist3_score(crop: Path, device: str, timeout_s: float = _AASIS
         log.warning("aasist3 helper exited %s — audio degraded (stderr: %s)",
                     r.returncode, (r.stderr or "").strip()[:200])
         return None
+    out: list[float] = []
     for line in r.stdout.splitlines():
         x = line.strip()
         if x.startswith("#") or not x:
             continue
+        if x.upper() == "NAN":
+            # The helper marks a file it could not score with NAN, so one
+            # bad crop does not abort the batch (and does not silently
+            # become a 0.0 posterior, which would read as "bonafide").
+            out.append(float("nan"))
+            continue
         try:
-            return float(x)
+            out.append(float(x))
         except ValueError:
             continue
-    log.warning("aasist3 helper produced no parseable posterior — audio degraded")
-    return None  # no parseable posterior line
+    if len(out) != len(crops):
+        log.warning(
+            "aasist3 helper returned %d posterior(s) for %d crop(s) — audio degraded",
+            len(out), len(crops))
+        return None
+    return out
+
+
+def _subprocess_aasist3_score(crop: Path, device: str,
+                               timeout_s: float = _AASIST3_SUBPROC_TIMEOUT_S
+                               ) -> float | None:
+    """Score ONE crop via the .venv-ambient helper (single-file wrapper).
+
+    Kept for callers that score a single crop; the multi-crop lane uses
+    `_subprocess_aasist3_scores`, which loads the checkpoint ONCE.
+    """
+    scores = _subprocess_aasist3_scores([crop], device, timeout_s)
+    if not scores:
+        return None
+    return scores[0]
 
 
 def _load_weights(env: str):
@@ -233,18 +283,37 @@ class DeepfakeAudioCapability:
     def _multi_crop_subprocess_aasist(self, ctx: JobContext, name: str, n_crops: int) -> list[CheckResult]:
         """AASIST3 via the .venv-ambient subprocess helper (the env that can load
         Wav2Vec2Model). Scores the crop windows, returns the median spoof posterior.
-        Honest unavailable (never a fabricated score) on helper failure."""
+        Honest unavailable (never a fabricated score) on helper failure.
+
+        ⚠️ ALL CROPS GO IN ONE SUBPROCESS (2026-10-22). This used to shell
+        out once per crop, so the Spectra-AASIST3 checkpoint was RELOADED
+        for every crop: a cold load is 63.1 s and an inference is 17.6 s,
+        so a 3-crop verdict cost ~241 s against a 120 s heavy-stage
+        budget — and the lane returned `UNVERIFIED` with `pending_heavy`
+        on real media. One call with N crops is 1 load + N inferences.
+        """
         crops = _crop_windows(ctx.quarantine_root / "crops", n_crops)
         if not crops:
             return [CheckResult(name + "_detector", "heavy", "unavailable", {},
                                 "no crop windows to score (audio decode unavailable); aasist3 skipped")]
         device = os.environ.get("VISHWAS_DEVICE", "cpu")
-        probs = [_subprocess_aasist3_score(cp, device) for cp in crops]
-        probs = [p for p in probs if p is not None and 0.0 <= p <= 1.0]
-        if not probs:
+        scored = _subprocess_aasist3_scores(crops, device)
+        if scored is None:
             return [CheckResult(name + "_detector", "heavy", "unavailable",
                                 {"missing_dependency": "subprocess-env"},
                                 "aasist3 subprocess scoring failed (see .venv-ambient/helper); audio evidence unavailable")]
+        # ⚠️ NaN IS "NOT SCORED", NOT 0.0. A NaN posterior would poison
+        # statistics.median() and, worse, a 0.0 would read as "bonafide" —
+        # the fail-open direction. So NaN crops are DROPPED, and if every
+        # crop is NaN the lane degrades honestly (no score) rather than
+        # reporting a fake 0.0.
+        import math
+        probs = [p for p in scored
+                 if p is not None and not math.isnan(p) and 0.0 <= p <= 1.0]
+        if not probs:
+            return [CheckResult(name + "_detector", "heavy", "unavailable",
+                                {"missing_dependency": "subprocess-env"},
+                                "aasist3 subprocess produced no usable posterior; audio evidence unavailable")]
         return [CheckResult(name + "_detector", "heavy", "ok",
                             {"prob_deepfake": round(statistics.median(probs), 3),
                              "n_crops_scored": len(probs),
