@@ -76,6 +76,58 @@ if _PYLIBS.is_dir() and str(_PYLIBS) not in sys.path:
 import pytest
 
 
+def _vishwas_tree_stamp() -> str:
+    """Return a one-line stamp of the tree the tests are running against.
+
+    "vishwas tree: <sha>" / "vishwas tree: <sha> (DIRTY WORKTREE)" /
+    "vishwas tree: UNKNOWN (no git info — a run's provenance CANNOT be
+    established)".
+    """
+    import subprocess
+    repo = str(Path(__file__).resolve().parents[1])
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo, capture_output=True, text=True, timeout=10)
+        sha = out.stdout.strip()
+        if not sha:
+            return ("vishwas tree: UNKNOWN (no git info — a run's provenance "
+                    "CANNOT be established)")
+        dirty = ""
+        d = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, timeout=10)
+        if d.stdout.strip():
+            dirty = " (DIRTY WORKTREE)"
+        return f"vishwas tree: {sha}{dirty}"
+    except Exception:
+        return "vishwas tree: UNKNOWN (git not available)"
+
+
+def pytest_report_header(config):
+    """Stamp the COMMIT into every test run's header.
+
+    2026-10-22. Four background test runs during one session reported
+    plausible but STALE counts (600, 544, 543+62, 0.7789-vs-0.7711), and
+    every one had to be dated by hand — usually by re-running
+    `pytest --collect-only` against each candidate commit in a scratch
+    worktree, which costs minutes per ambiguity.
+
+    The root cause is that a test run's output does not say which tree it
+    ran against, so a stale run is indistinguishable from a regression until
+    you go and check. This header makes every run self-dating.
+
+    NOTE: `-q` suppresses the header, so the same stamp is ALSO written by
+    `pytest_terminal_summary` below, which prints in both modes.
+    """
+    return _vishwas_tree_stamp()
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Repeat the tree stamp where `-q` cannot hide it."""
+    terminalreporter.write_line(_vishwas_tree_stamp())
+
+
 @pytest.fixture
 def qroot(tmp_path):
     """A throwaway quarantine root for one test (assertable post-run)."""
