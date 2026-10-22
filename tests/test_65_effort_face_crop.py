@@ -36,6 +36,18 @@ the whole frame at -0.30:
 ...and on the operator's OWN media (the clean-side guard) both read 4/4
 genuine = trust and 3/3 AI videos = do_not_use.
 
+⚠️ 2026-10-22: THE "3/3 AI = do_not_use" ABOVE IS NO LONGER TRUE, AND IT
+WAS NEVER A PROPERTY OF THE FACE CROP. It came from the cross-modal reading
+av=0.5, which was the correlation function's UNDEFINED SENTINEL (-2.0) --
+the AI videos have a COMPLETELY SILENT audio track (RMS 0.0), so their
+correlation was undefined and the pipeline reported them as anti-correlated.
+With the honest reading they read MEDIUM/caution. The face crop's own
+measured effect (the AUC and the corpus numbers above) is unchanged; only
+the end-to-end AI-video verdict is.
+
+The 4/4 genuine = trust reading still holds, and that is the half of the
+clean-side guard this crop is responsible for.
+
 THE FALLBACK IS MANDATORY
 -------------------------
 One of the operator's 4 genuine clips has **no detectable face** on any

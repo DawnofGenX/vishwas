@@ -82,10 +82,18 @@ across both classes and asserts the marginals match) measured the truth:
   contributed at most 0.43 — the noise outweighed the evidence. Slope is now
   1.0, with no invented amplification.
 - `av_risk_addition`'s weight dropped 3.5 → 1.5, and a **corroboration gate**
-  now discounts the *decorrelated* band (0.45) when no video-side signal
-  agrees with it. The *anti-correlated* band (0.5) is untouched: that is the
-  genuine deepfake signature — all 3 of the operator's own AI videos read
-  0.5, and all 4 genuine operator clips read 0.0/0.1.
+  now discounts an elevated cross-modal reading when no video-side signal
+  agrees with it. ⚠️ **2026-10-22: the gate used to treat the two elevated
+  bands differently — the *decorrelated* band (0.45) was discounted but the
+  *anti-correlated* band (0.5) was TRUSTED as "the genuine deepfake
+  signature".** That was wrong. The 0.5 readings were the correlation
+  function's **UNDEFINED sentinel** (`-2.0`), i.e. clips with a **silent
+  audio track** being reported as "the modalities were generated
+  independently". Measured on the operator's real WhatsApp traffic, **12% of
+  genuine video has the same all-zero audio track** — so the band could not
+  discriminate. Both bands are now treated identically: an elevated
+  cross-modal reading may **corroborate** a video-side signal, never carry
+  the verdict on its own.
 - The `disagreement` metric compared **calibrated** values across two
   differently-scaled detectors, so two detectors that agreed produced a
   spread of 0.39 and tripped the abort on genuine clips. With the
@@ -93,9 +101,14 @@ across both classes and asserts the marginals match) measured the truth:
   again.
 
 **Measured outcome** on the leak-free corpus (60 rows, production code
-paths): **0 genuine clips read DO_NOT_USE** (was 2), **0 fakes read TRUST**,
-and the operator's 3 AI videos now read `do_not_use` end-to-end through the
-CLI (they previously read `trust`).
+paths): **0 genuine clips read DO_NOT_USE** (was 2), **0 fakes read TRUST**.
+⚠️ **2026-10-22: "the operator's 3 AI videos now read `do_not_use`
+end-to-end" IS NO LONGER TRUE.** It was true, but it was carried by the
+cross-modal reading `av=0.5` — which was the **silence artefact** described
+above. With the honest reading the 3 AI videos read **MEDIUM/caution**, which
+is the truthful verdict: measured on the operator's real traffic, no rule
+over the current signals reaches `do_not_use` for them without also flagging
+genuine media. The 4 genuine clips still read **LOW/trust**.
 
 **The honest limit:** this corpus cannot yield both zero false positives and
 full detection. `real_006` and `fake_006` differ by 0.003 in calibrated
@@ -139,13 +152,17 @@ that only publishes its wins is not telling you the truth:
 - **With the corrected input, effort alone still cannot separate the
   operator's own AI videos** from some genuine clips — the AI videos score
   0.54–0.65 on the face crop while some genuine clips score higher. The
-  **cross-modal** signal is what flags them (their audio is
-  anti-correlated, av=0.5). That is the documented design, and the real AI
-  videos do read `do_not_use` end-to-end (3/3 HIGH). But on the leak-free
-  corpus 11 of 30 fakes still read TRUST, because a muxed audio track
+  **cross-modal** signal is what flagged them — via `av=0.5` — and that
+  reading was the **silence artefact** described above, so the AI videos now
+  read **MEDIUM/caution** rather than `do_not_use`. On the leak-free corpus
+  11 of 30 fakes still read TRUST, because a muxed audio track
   decorrelates rather than anti-correlates and never reaches the
   anti-correlated band. **A corpus with naturally synchronised audio is
-  the missing instrument.**
+  the missing instrument** — and it is now the operator's own WhatsApp
+  traffic, which is what exposed the silence artefact in the first place.
+  The remaining gap for full-scene AI video is a **missing checkpoint**
+  (a general-AIGC *video* detector; the `genimage` EFFORT variant is
+  image-domain and measured inverted on these frames), not a threshold.
 - **The face crop also raises SOME genuine clips** (a low-quality phone
   face can read as synthetic: ffc23 real 451 went 0.421 → 0.775 on the
   whole frame vs the crop). That is a real false-positive cost, and it is

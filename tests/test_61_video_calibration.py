@@ -402,11 +402,30 @@ def test_video_detection_rate_is_reported_not_claimed_as_total():
 
     With the CORRECT input AND the face crop, the operator's own AI videos
     score LOWER on effort than some genuine clips, so effort ALONE cannot
-    separate them -- the cross-modal signal is what flags them. That is the
-    documented design ("the operator AI video still reaches DO_NOT_USE via
-    the AV corroboration path, NOT effort alone") -- and the real AI videos
-    DO read DO_NOT_USE end-to-end, verified against the live CLI (3/3 AI
-    videos HIGH, 4/4 genuine clips LOW).
+    separate them -- the cross-modal signal is what flagged them. That is
+    the documented design ("the operator AI video still reaches DO_NOT_USE
+    via the AV corroboration path, NOT effort alone") -- and at the time the
+    real AI videos DID read DO_NOT_USE end-to-end, verified against the live
+    CLI (3/3 AI videos HIGH, 4/4 genuine clips LOW).
+
+    ⚠️ 2026-10-22: THAT "3/3 AI HIGH" IS NO LONGER TRUE, AND IT WAS NEVER
+    A PROPERTY OF THIS OFFSET. The cross-modal reading that carried it,
+    av=0.5, was the correlation function's UNDEFINED SENTINEL (-2.0): the
+    AI videos have a COMPLETELY SILENT audio track (RMS 0.0), so their
+    correlation was undefined and the pipeline reported them as
+    anti-correlated. With the honest reading they read MEDIUM/caution, and
+    the 4/4 genuine = LOW reading is unchanged.
+
+    Measured on the operator's real WhatsApp traffic, NO rule over the
+    current signals reaches DNU for the AI videos without also flagging
+    genuine media (12% of genuine WhatsApp video has the same all-zero
+    audio track). The remaining gap is a MISSING CHECKPOINT, not a
+    threshold.
+
+    THE OFFSET IS STILL CHOSEN BY THE CORPUS NUMBERS ABOVE (13/30 fakes
+    flagged at 1 false positive) and by the clean-side half of the guard
+    (4/4 genuine = trust). Only the AI-video half of the end-to-end
+    expectation is gone.
 
     The 11 fakes reading TRUST are the honest cost: this corpus's audio is
     MUXED from a different source, so the lip/speech envelopes
