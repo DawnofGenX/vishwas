@@ -25,6 +25,7 @@ default on boxes without the weights provisioned.
 """
 from __future__ import annotations
 
+import math
 import os
 import statistics
 import subprocess
@@ -89,12 +90,44 @@ def _norm(x: list[float]) -> list[float]:
     return [(v - m) / s for v in x]
 
 
+#: Sentinel for "the correlation could not be computed" — the envelope was
+#: constant (a silent or speechless audio track) or too short. It is
+#: deliberately OUTSIDE the Pearson range [-1, 1] so it can never be
+#: mistaken for a real negative correlation.
+#:
+#: 2026-10-22: this used to be -2.0, and the classifier's
+#: `else "anti_correlated" if r < -0.25` branch mapped it straight to
+#: `av_risk_addition = 0.5` — the HIGHEST-risk cross-modal reading, and the
+#: one the fusion corroboration gate explicitly trusts. Measured on 67 real
+#: WhatsApp videos from the operator's own traffic, 9 genuine clips with a
+#: constant speech envelope were reported as "anti-correlated", i.e. as
+#: evidence that the modalities were independently generated. That is a
+#: FAIL-OPEN path in the clean direction.
+NO_CORRELATION = float("nan")
+
+#: The risk reading for an unmeasurable cross-modal check. Neutral: a clip
+#: whose audio carries no speech energy is not evidence of anything, so it
+#: must not push a verdict in EITHER direction.
+UNKNOWN_AV_RISK = 0.0
+
+
 def _lagged_crosscorr(a: list[float], b: list[float], max_lag_ms: int = 200, tgrid: int = 30) -> tuple[float, int]:
-    """Best lag (in ms) and its Pearson r between two normalized envelopes."""
+    """Best lag (in ms) and its Pearson r between two normalized envelopes.
+
+    Returns (NO_CORRELATION, 0) when the correlation is UNDEFINED — either
+    envelope is constant (a silent or speechless audio track, or a static
+    video) or there are too few points. The caller must treat that as
+    "could not measure", NOT as a negative correlation.
+    """
     if len(a) < 4 or len(b) < 4:
-        return 0.0, 0
+        return NO_CORRELATION, 0
+    # A constant envelope has no correlation to compute. Detect it BEFORE
+    # normalising, because normalising divides by a zero standard deviation
+    # and yields NaN.
+    if (statistics.pstdev(a) or 0.0) <= 1e-12 or (statistics.pstdev(b) or 0.0) <= 1e-12:
+        return NO_CORRELATION, 0
     la, lb = _norm(a), _norm(b)
-    best_r, best_lag = -2.0, 0
+    best_r, best_lag = None, 0
     max_lags = max(1, max_lag_ms // (1000 // tgrid))
     for lag in range(-max_lags, max_lags + 1):
         pa = la[max(0, lag):min(len(la), len(lb) + lag)]
@@ -106,8 +139,12 @@ def _lagged_crosscorr(a: list[float], b: list[float], max_lag_ms: int = 200, tgr
             r = float(np.corrcoef(pa[:n], pb[:n])[0, 1])
         except Exception:
             continue
-        if r > best_r:
+        if not math.isfinite(r):
+            continue
+        if best_r is None or r > best_r:
             best_r, best_lag = r, lag
+    if best_r is None:
+        return NO_CORRELATION, 0
     return best_r, int(abs(best_lag) * (1000 // tgrid))
 
 
@@ -136,17 +173,32 @@ class CrossModalCapability:
         #   r >= 0.35 & lag <= 100  : synced
         #   |r| small (<0.15)       : decorrelated -> possible modality swap
         #   strong negative         : anti-correlated -> likely independent generation
-        verdict_class = ("synced" if r >= 0.35 and lag_ms <= 100
-                         else "decorrelated" if abs(r) < 0.15
-                         else "anti_correlated" if r < -0.25
-                         else "weakly_synced")
-        risk_add = {"synced": 0.0, "weakly_synced": 0.1, "decorrelated": 0.45,
-                    "anti_correlated": 0.5}.get(verdict_class, 0.1)
+        #
+        # 2026-10-22: an UNDEFINED correlation (a constant envelope -- a
+        # silent or speechless audio track) is NOT evidence of anything. It
+        # used to be reported as the -2.0 sentinel, which fell into the
+        # `r < -0.25` branch and became av_risk_addition = 0.5, the
+        # HIGHEST-risk reading and the one the fusion corroboration gate
+        # trusts. Measured on 67 real WhatsApp videos, 9 genuine clips with
+        # no speech energy were reported that way. A clip the check could
+        # not measure must not push a verdict in EITHER direction.
+        if not math.isfinite(r):
+            verdict_class = "unknown"
+            risk_add = UNKNOWN_AV_RISK
+            r = 0.0
+        else:
+            verdict_class = ("synced" if r >= 0.35 and lag_ms <= 100
+                             else "decorrelated" if abs(r) < 0.15
+                             else "anti_correlated" if r < -0.25
+                             else "weakly_synced")
+            risk_add = {"synced": 0.0, "weakly_synced": 0.1, "decorrelated": 0.45,
+                        "anti_correlated": 0.5}.get(verdict_class, 0.1)
         notes_map = {
             "synced": "lip motion and speech energy move together in time (coherent)",
             "weakly_synced": "moderate AV coherence; some regions diverge",
             "decorrelated": "LIP AND AUDIO MOVEMENTS DO NOT LINE UP — classic sign of one track being replaced (voice-swap or lip-sync patch)",
             "anti_correlated": "envelopes move oppositely; suggests independently generated modalities",
+            "unknown": "cross-modal correlation could not be measured (no speech energy in the audio track); no AV evidence either way",
         }
         base = [CheckResult("cross_modal_av", "heavy", "ok",
                             {"av_correlation": round(float(r), 3),
