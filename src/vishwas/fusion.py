@@ -398,6 +398,27 @@ _CALIBRATE: dict[str, tuple[float, float]] = {
     #     offset -0.40 .. -0.20  -> 4/4 real trust,  3/3 AI DO_NOT_USE
     # so the whole band satisfies the intent.
     #
+    # ⚠️ 2026-10-22: INTENT (b) IS NO LONGER SATISFIED, and the reason is
+    # the bug PR #13 fixed. The "3/3 AI DO_NOT_USE" above was produced by
+    # the cross-modal reading av=0.5 -- and that 0.5 was the correlation
+    # function's UNDEFINED SENTINEL (-2.0), i.e. the AI videos' SILENT
+    # audio tracks being reported as "the modalities were generated
+    # independently". The operator's 3 AI videos now read MEDIUM/caution,
+    # which is the HONEST verdict: measured on the operator's real WhatsApp
+    # traffic, NO rule over the current signals reaches DNU for them
+    # without also flagging genuine media (12% of genuine WhatsApp video
+    # has the same all-zero audio track). The remaining gap is a MISSING
+    # CHECKPOINT -- the genimage general-AIGC EFFORT variant, which is
+    # image-domain and measured INVERTED on these video frames -- not a
+    # threshold. See notes/vishwas-av-sync-real-traffic-2026-10-22.md.
+    #
+    # The OFFSET IS STILL JUSTIFIED, on the measurement that actually
+    # chose it: intent (a) (genuine media off DNU on effort alone) and
+    # the leak-free corpus numbers below (13/30 fakes flagged at 1 false
+    # positive). Only the claim that the real AI videos reach DNU via the
+    # cross-modal path is gone, and it was never a measured effect of this
+    # offset -- it was a property of the broken av reading.
+    #
     # On the leak-free 60-clip corpus WITH the face crop:
     #     offset  FP  fakes flagged  fakes reading TRUST
     #     -0.45    1       12                11
