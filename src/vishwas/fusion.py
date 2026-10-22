@@ -612,7 +612,7 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     # genimage is consulted FIRST.
     #
     # THE THRESHOLD (0.9855) AND THE VETO-ONLY SHAPE ARE BOTH MEASURED
-    # (real FusionEngine, 60 images, tools/eval_image_arbitration.py). The
+    # (real FusionEngine, 60 images, tools/sweep_genimage_veto.py). The
     # full sweep, with the baseline (no genimage) at fakeTRUST 3/30 and
     # realFALSEALARM 12/30:
     #
@@ -620,19 +620,41 @@ def _image_clean(by_name: dict[str, Any]) -> bool:
     #                 fakeTRUST  realFA      fakeTRUST  realFA
     #      0.9000        0/30      14/30        0/30      12/30
     #      0.9300        1/30      13/30        1/30      11/30
-    #      0.9400        2/30      13/30        3/30      11/30
-    #      0.9500        2/30      12/30        4/30      10/30
-    #      0.9855        2/30      12/30        5/30       8/30
+    #      0.9400        2/30      13/30        2/30      11/30
+    #      0.9500        2/30      12/30        3/30      10/30
+    #      0.9700        2/30      12/30        3/30       8/30
+    #      0.9855        2/30      12/30        3/30       8/30
+    #      0.9950        2/30      12/30        3/30       8/30
     #
     # THE "CLEAR" VARIANT IS REJECTED. Letting a low genimage read clear a
     # lone NYUAD hit sounds right, but it does the opposite of what it
-    # promises: the three AI images it newly let through (gigagan_07,
-    # midjourney_v6.1_04, stable_diffusion_3_03) all have genimage 0.93-0.98
-    # — HIGH — and NYUAD 0.998-0.9995 — also HIGH. A "low" genimage reading
-    # is not evidence of genuineness, and letting a signal that reads
-    # 0.93-0.98 override a detector that reads 0.999 is exactly backwards.
+    # promises: the ONE AI image it newly lets through (midjourney_v6.1_04,
+    # spai 0.0061, nyuad 0.9995, genimage 0.9442) has a HIGH NYUAD reading
+    # overridden by a genimage reading of 0.94. A "low" genimage reading is
+    # not evidence of genuineness, and letting a signal that reads 0.94
+    # override a detector that reads 0.9995 is exactly backwards.
     # So genimage is a VETO ONLY: it can deny a clean reading, never grant
     # one.
+    #
+    # 2026-10-22 — THIS TABLE WAS RE-DERIVED. It cited
+    # `tools/eval_image_arbitration.py`, but that tool sweeps NO threshold
+    # and implements NO "clear" shape — it measures the two-signal
+    # (SPAI + NYUAD) arbitration only. The table was ASSERTED, not
+    # reproducible. `tools/sweep_genimage_veto.py` now re-derives it by
+    # WRAPPING the real shipped `_image_clean` (never re-implementing it —
+    # a re-implementation used `spai >= 0.5` where the shipped rule is
+    # `spai <= 0.45`, and got realFA 11/30 instead of 12/30).
+    #
+    # THE VETO-ONLY COLUMN REPRODUCES EXACTLY — the shipped threshold and
+    # the shipped shape are CORRECT. The VETO+CLEAR column did NOT: it
+    # claimed fakeTRUST 3/30 at 0.9400, 4/30 at 0.9500 and 5/30 at 0.9855,
+    # where the measurement gives 2/30, 3/30 and 3/30. The old comment also
+    # named THREE images as "newly let through" (gigagan_07,
+    # midjourney_v6.1_04, stable_diffusion_3_03) when only midjourney_v6.1_04
+    # is: gigagan_07 reads SPAI 1.0000 and stable_diffusion_3_03 reads SPAI
+    # 0.5967, so SPAI already denies both — only a low-SPAI image can be
+    # newly let through. The REJECTION STANDS (the clear shape is worse in
+    # the dangerous direction); the numbers above are corrected.
     #
     # THE RESULT: fakeTRUST 3/30 -> 2/30 (one fewer AI image reads TRUST),
     # realFALSEALARM unchanged at 12/30. The third signal buys a strictly
