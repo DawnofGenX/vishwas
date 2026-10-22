@@ -102,15 +102,20 @@ def test_the_stamp_reports_unknown_rather_than_guessing():
 
     # A copy of the repo with no .git directory.
     tmp = pathlib.Path(tempfile.mkdtemp())
-    dest = tmp / "repo"
-    shutil.copytree(REPO / "src", dest / "src")
-    shutil.copytree(REPO / "tests", dest / "tests")
-    (dest / "pyproject.toml").write_text((REPO / "pyproject.toml").read_text())
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", PROBE, "-q"],
-        cwd=str(dest), capture_output=True, text=True, timeout=300,
-        env={"PYTHONPATH": "src", "PATH": __import__("os").environ.get("PATH", "")})
-    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        dest = tmp / "repo"
+        shutil.copytree(REPO / "src", dest / "src")
+        shutil.copytree(REPO / "tests", dest / "tests")
+        (dest / "pyproject.toml").write_text((REPO / "pyproject.toml").read_text())
+        r = subprocess.run(
+            [sys.executable, "-m", "pytest", PROBE, "-q"],
+            cwd=str(dest), capture_output=True, text=True, timeout=300,
+            env={"PYTHONPATH": "src", "PATH": __import__("os").environ.get("PATH", "")})
+    finally:
+        # 2026-10-22: the rmtree was NOT in a finally, so the copy leaked
+        # whenever the assertion below failed — i.e. exactly when the tree
+        # is hardest to reason about.
+        shutil.rmtree(tmp, ignore_errors=True)
     combined = r.stdout + r.stderr
     if r.returncode == 0:
         assert "vishwas tree: UNKNOWN" in combined, (
