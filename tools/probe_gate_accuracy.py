@@ -182,18 +182,31 @@ def probe_audio(n: int = 60) -> list[dict]:
             out.append({"gate": label, "error": "load() -> None"})
             continue
 
-        scores, labels, errs = [], [], 0
+        scores, labels, errs, skipped = [], [], 0, 0
+        dropped = []
         for k, (idx, lab) in enumerate(picks):
+            # ⚠️ COUNT EVERY DROP (2026-10-22). These two branches used to be
+            # a bare `except Exception: continue` -- the exact shape that
+            # made the image channel report n=59 on a 60-image corpus
+            # (PR #34) and made the audio channel report "the model is
+            # broken" when the PROBE was broken (n=0, PR #27). A number
+            # does not advertise its own missingness, so the drop is
+            # counted AND attributed.
             try:
-                data, sr = sf.read(io.BytesIO(audio[idx]["bytes"]), dtype="float32")
-            except Exception:
+                data, sr = sf.read(io.BytesIO(audio[idx]["bytes"]),
+                                   dtype="float32")
+            except Exception as e:  # noqa: BLE001
+                skipped += 1
+                dropped.append(f"row {idx}: decode {type(e).__name__}")
                 continue
             if data.ndim > 1:
                 data = data.mean(axis=1)
             w = wavdir / f"{label}_{k}.wav"
             try:
                 sf.write(str(w), data, sr)
-            except Exception:
+            except Exception as e:  # noqa: BLE001
+                skipped += 1
+                dropped.append(f"row {idx}: write {type(e).__name__}")
                 continue
             # THE PRODUCTION CALL, not a reimplementation of it: the
             # capability's own `_infer_prob` (preprocess -> call -> extract
@@ -210,8 +223,16 @@ def probe_audio(n: int = 60) -> list[dict]:
                 continue
             scores.append(s)
             labels.append(lab)
+        if skipped:
+            print(f"    ⚠️ audio/{label}: {skipped} of {len(picks)} did not "
+                  f"score (corpus items DROPPED, not model failures)")
+            for why in dropped[:5]:
+                print(f"        {why}")
+            if len(dropped) > 5:
+                print(f"        ... and {len(dropped) - 5} more")
         rec = {"gate": label, "n": len(scores), "errors": errs,
-               "auc": auc(scores, labels), "sep": sep(scores, labels)}
+               "skipped": skipped, "auc": auc(scores, labels),
+               "sep": sep(scores, labels)}
         out.append(rec)
     return out
 
@@ -235,6 +256,7 @@ def probe_image(n: int = 30) -> list[dict]:
         return [{"gate": label, "error": "load() -> None"}]
 
     scores, labels = [], []
+    total_skipped = 0
     for sub, lab in (("ai", 1), ("real", 0)):
         d = IMG_DIR / sub
         if not d.is_dir():
@@ -278,9 +300,13 @@ def probe_image(n: int = 30) -> list[dict]:
         if skipped:
             print(f"    ⚠️ image/{sub}: {skipped} of {len(files)} did not score")
         if len(files) < corpus_n:
-            print(f"    (image/{sub}: scored {len(files)} of {corpus_n} available)")
-    return [{"gate": label, "n": len(scores), "auc": auc(scores, labels),
-             "sep": sep(scores, labels)}]
+            # "sampled", not "scored": `files` is the SAMPLE the probe took.
+            # Conflating the two hid a drop for a day (PR #34).
+            print(f"    (image/{sub}: sampled {len(files)} of {corpus_n} "
+                  f"available, scored {len(files) - skipped})")
+        total_skipped += skipped
+    return [{"gate": label, "n": len(scores), "skipped": total_skipped,
+             "auc": auc(scores, labels), "sep": sep(scores, labels)}]
 
 
 # ---------------------------------------------------------------- VIDEO
@@ -335,8 +361,8 @@ def probe_video(n: int = 40) -> list[dict]:
             skipped += 1
     if skipped:
         print(f"    ⚠️ video: {skipped} of {len(clips)} clips did not score")
-    return [{"gate": label, "n": len(scores), "auc": auc(scores, labels),
-             "sep": sep(scores, labels)}]
+    return [{"gate": label, "n": len(scores), "skipped": skipped,
+             "auc": auc(scores, labels), "sep": sep(scores, labels)}]
 
 
 def _expected_counts() -> dict:
@@ -408,6 +434,11 @@ def main() -> int:
             if exp is None:
                 continue
             n = r.get("n", 0)
+            sk = r.get("skipped", 0)
+            if sk:
+                print(f"  ⚠️ {channel:6} {r['gate']:14} {sk} corpus item(s) "
+                      f"were DROPPED before scoring (see the per-channel "
+                      f"warning above)")
             if n != exp:
                 print(f"  ⚠️ {channel:6} {r['gate']:14} measured n={n} but the "
                       f"corpus has {exp} — SOMETHING WAS DROPPED")

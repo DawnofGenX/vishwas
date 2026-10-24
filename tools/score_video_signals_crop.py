@@ -53,12 +53,30 @@ adapter = _resolve_adapter("VISHWAS_EFFORT_WEIGHTS")
 model = adapter.load(os.environ["VISHWAS_EFFORT_WEIGHTS"])
 
 
+DROPS = {"row_missing": 0, "frame_unreadable": 0, "frame_infer_error": 0}
+
+
+def _fmt(v) -> str:
+    """`None` is a legitimate score (nothing scored) — print it as such."""
+    return "  none" if v is None else f"{v:.3f}"
+
+
 def score_frames(frames, crop: bool):
+    """Median Effort prob over as many frames as actually score.
+
+    ⚠️ COUNT EVERY FRAME THAT DOES NOT SCORE (2026-10-22). The two bare
+    `except: continue` / `if img is None: continue` branches below used to
+    drop frames in silence, so a clip scored on 1 of 8 frames produced the
+    same kind of number as a clip scored on 8 of 8 — and THIS is the
+    authoritative harness for the shipped face crop (AUC 0.7789). A
+    measurement whose denominator is invisible is not a measurement.
+    """
     from vishwas.capabilities.deepfake_video import _infer
     probs = []
     for fp in frames[:8]:
         img = _read_bgr(fp)
         if img is None:
+            DROPS["frame_unreadable"] += 1
             continue
         if crop:
             c = _effort_face_crop(img)
@@ -68,8 +86,12 @@ def score_frames(frames, crop: bool):
             p = _infer(adapter, model, img)
             if p is not None:
                 probs.append(p)
-        except Exception:
+        except Exception:  # noqa: BLE001
+            DROPS["frame_infer_error"] += 1
             continue
+    if len(probs) < min(8, len(frames)):
+        print(f"    ⚠️ {len(probs)} of {min(8, len(frames))} frames scored "
+              f"(crop={crop}) — the median is over a smaller sample")
     return st.median(probs) if probs else None
 
 
@@ -88,6 +110,11 @@ for i, r in enumerate(rows):
     q.mkdir(parents=True, exist_ok=True)
     p = pathlib.Path(r["path"])
     if not p.exists():
+        # COUNTED, NOT SILENT (2026-10-22): a missing clip shrinks the AUC
+        # denominator, and the AUC below is the number the skill records.
+        DROPS["row_missing"] += 1
+        print(f"  ⚠️ row {i}: missing file {p.name} — DROPPED from the "
+              f"measurement")
         continue
     art = Artifact(path=p, original_filename=p.name, declared_type="video",
                    size_bytes=p.stat().st_size)
@@ -113,8 +140,9 @@ for i, r in enumerate(rows):
     out.append(rec)
     with OUT.open("a") as fh_:
         fh_.write(json.dumps(rec) + "\n")
-    print(f"  {p.name[:22]:<24s} lab={r['label']} full={rec['effort_full']:.3f} "
-          f"crop={rec['effort_crop']:.3f} fh={fh} av={av}")
+    print(f"  {p.name[:22]:<24s} lab={r['label']} "
+          f"full={_fmt(rec['effort_full'])} "
+          f"crop={_fmt(rec['effort_crop'])} fh={fh} av={av}")
 
 print()
 print("=" * 92)
@@ -124,8 +152,16 @@ for key in ("effort_full", "effort_crop"):
     rv = [r[key] for r in out if r["label"] == 0 and r[key] is not None]
     fv = [r[key] for r in out if r["label"] == 1 and r[key] is not None]
     print(f"  {key:<14s} AUC={auc(fv, rv):.4f}  real med={st.median(rv):.4f}  "
-          f"fake med={st.median(fv):.4f}  gap={st.median(fv)-st.median(rv):+.4f}")
+          f"fake med={st.median(fv):.4f}  gap={st.median(fv)-st.median(rv):+.4f}"
+          f"  (n={len(fv)} fake / {len(rv)} real)")
 print(f"\n  wrote {len(out)} rows -> {OUT}")
+
+# ⚠️ THE DENOMINATOR MUST BE VISIBLE (2026-10-22). The AUCs above are the
+# numbers the skill records for the shipped face crop, so anything the
+# harness dropped has to be printed next to them, not left in a corner.
+_nd = sum(DROPS.values())
+print(f"  DROPPED: {DROPS}" + ("" if not _nd else
+      f"  ← {_nd} item(s) missing from the measurement above"))
 print()
 print("  EXPECTED (measured 2026-10-21, reproduced 2026-10-22):")
 print("    effort_full  AUC=0.7189  real med=0.4762  fake med=0.6190")
